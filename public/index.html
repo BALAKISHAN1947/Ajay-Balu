@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentReady | Nexora Technologies AI Commerce Interface</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-logo">
+        <div class="logo-icon">AR</div>
+        <div class="logo-text">
+          <span class="brand-title">AgentReady</span>
+          <span class="merchant-badge">Nexora Technologies</span>
+        </div>
+      </div>
+      <div class="trust-pill">
+        <span class="pulse-dot"></span>
+        <span>Deterministic Decision Core • Track 01</span>
+      </div>
+    </div>
+    <nav class="app-nav-tabs" aria-label="Main Navigation">
+      <button id="nav-btn-customer" class="nav-tab active" data-target="customer-view">
+        <span class="tab-icon">🛒</span> Customer Shopping
+      </button>
+      <button id="nav-btn-merchant" class="nav-tab" data-target="merchant-view">
+        <span class="tab-icon">📊</span> Merchant Revenue Intelligence
+      </button>
+    </nav>
+    <div class="header-right">
+      <div class="session-info">
+        <span class="session-label">Session ID:</span>
+        <span id="session-id-display" class="session-code">Initializing...</span>
+      </div>
+      <button id="reset-session-btn" class="btn-ghost" title="Start New Conversation">New Search</button>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main class="main-layout" id="customer-view">
+    <!-- Left Column: Conversational AI Agent Area -->
+    <section class="chat-section" aria-label="Conversation Area">
+      <div class="chat-header">
+        <h2>Shopping Assistant</h2>
+        <span class="status-badge" id="agent-status-badge">Ready</span>
+      </div>
+
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
+        <!-- Initial Agent Welcome Message -->
+        <div class="message agent-message">
+          <div class="message-meta">
+            <span class="agent-avatar">AI</span>
+            <span class="sender-name">Nexora Shopping Agent</span>
+            <span class="time-stamp">Just now</span>
+          </div>
+          <div class="message-body">
+            <p>Welcome to <strong>Nexora Technologies</strong>. I can assist you with finding laptops, mice, and bags tailored to your workflow and budget.</p>
+            <p class="trust-notice"><span class="verified-tag">VERIFIED</span> All pricing, inventory, specs, and physical dimensions are calculated deterministically against our live catalog.</p>
+            <div class="quick-prompts">
+              <span class="quick-prompt-label">Try asking:</span>
+              <button class="quick-btn" data-query="I need a laptop for coding under ₹70,000. I travel every day, so I want something light with good battery life, at least 16GB RAM, and I also need a mouse and laptop bag.">Coding laptop under ₹70k with mouse and bag</button>
+              <button class="quick-btn" data-query="I need a laptop for work">I need a laptop for work (Clarification test)</button>
+              <button class="quick-btn" data-query="I need a laptop under 35k with 32GB RAM">32GB RAM under 35k (Rejection test)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Clarification Box (Dynamic) -->
+      <div id="clarification-banner" class="clarification-banner hidden">
+        <div class="clarification-icon">?</div>
+        <div class="clarification-content">
+          <span class="clarification-title">Clarification Needed to Match You Safely:</span>
+          <p id="clarification-text"></p>
+        </div>
+      </div>
+
+      <!-- Chat Input Form -->
+      <form id="chat-form" class="chat-input-area">
+        <div class="input-wrapper">
+          <input
+            type="text"
+            id="chat-input"
+            name="customerMessage"
+            placeholder="Describe your workspace needs (e.g. coding laptop under 70k, 16GB RAM, light for travel)..."
+            autocomplete="off"
+            required
+          />
+          <button type="submit" id="send-btn" class="btn-primary" aria-label="Send Message">
+            <span>Send</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+        <div class="input-footer">
+          <span>Conversational refinement supported • Authoritative backend calculation</span>
+        </div>
+      </form>
+    </section>
+
+    <!-- Right Column: Live Recommendation Card & Bundle Engine -->
+    <section class="engine-section" aria-label="Recommendation Panel">
+      <div class="engine-header">
+        <div class="section-title-wrap">
+          <h2>Grounded Recommendation</h2>
+          <span class="engine-tag" id="engine-status-tag">Deterministic Engine Standby</span>
+        </div>
+        <div id="confidence-indicator" class="confidence-indicator hidden">
+          <span class="confidence-label">Verification:</span>
+          <span id="confidence-score" class="confidence-value">Hard constraints verified</span>
+        </div>
+      </div>
+
+      <!-- Empty State / Standby -->
+      <div id="empty-state" class="empty-state">
+        <div class="empty-state-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <h3>No Recommendation Active</h3>
+        <p>Send a natural-language shopping inquiry on the left to trigger deterministic candidate filtering, multi-attribute utility scoring, and physical clearance verification.</p>
+      </div>
+
+      <!-- Loading State -->
+      <div id="loading-state" class="loading-card hidden">
+        <div class="spinner"></div>
+        <p class="loading-title">Evaluating 25-SKU Catalog...</p>
+        <p class="loading-subtitle">Filtering hard constraints • Solving 3D bag dimensions • Checking port reservations</p>
+      </div>
+
+      <!-- Recommendation View (Populated when SUCCESS) -->
+      <div id="recommendation-card" class="recommendation-card hidden">
+        <!-- Primary Winning Laptop Header -->
+        <div class="product-banner">
+          <div class="product-badge-row">
+            <span class="badge verified-badge">VERIFIED SPEC SHEET</span>
+            <span class="badge stock-badge" id="stock-badge">In Stock</span>
+            <span class="badge category-badge">PRIMARY LAPTOP</span>
+          </div>
+          <h3 id="product-name" class="product-title">Nexora AeroBook 14</h3>
+          <div class="sku-variant-line">
+            <span>SKU: <strong id="product-sku" class="mono">NX-LP-AERO14-01</strong></span>
+            <span class="bullet">•</span>
+            <span>Variant: <strong id="product-variant" class="mono">v_14_16_512_i5</strong></span>
+          </div>
+          <div class="price-row">
+            <div class="price-display">
+              <span class="price-currency">₹</span>
+              <span id="product-price" class="price-number">62,999</span>
+            </div>
+            <button id="compare-btn" class="btn-outline-sm" title="Compare with DevForge 15">Compare with DevForge 15</button>
+          </div>
+        </div>
+
+        <!-- Verified Specs Grid -->
+        <div class="specs-grid">
+          <div class="spec-item">
+            <span class="spec-label">Memory</span>
+            <span id="spec-ram" class="spec-val">16GB LPDDR5</span>
+            <span class="spec-tag verified" id="spec-ram-tag">VERIFIED</span>
+          </div>
+          <div class="spec-item">
+            <span class="spec-label">Storage</span>
+            <span id="spec-storage" class="spec-val">512GB NVMe Gen4</span>
+            <span class="spec-tag verified">VERIFIED</span>
+          </div>
+          <div class="spec-item">
+            <span class="spec-label">Chassis Weight</span>
+            <span id="spec-weight" class="spec-val">1.28 kg</span>
+            <span class="spec-tag verified">VERIFIED</span>
+          </div>
+          <div class="spec-item">
+            <span class="spec-label">Battery Capacity</span>
+            <span id="spec-battery" class="spec-val">57 Wh (~10.5 hrs)</span>
+            <span class="spec-tag verified">VERIFIED</span>
+          </div>
+          <div class="spec-item">
+            <span class="spec-label">Graphics / GPU</span>
+            <span id="spec-gpu" class="spec-val">Intel Iris Xe</span>
+            <span class="spec-tag verified" id="spec-gpu-tag">VERIFIED</span>
+          </div>
+        </div>
+
+        <!-- Why Selected Criteria -->
+        <div class="selection-rationale">
+          <h4 class="subhead">Why This Product Won the Multi-Attribute Utility Score:</h4>
+          <ul id="rationale-list" class="rationale-list">
+            <!-- Populated dynamically -->
+          </ul>
+        </div>
+
+        <!-- Disclosed Trade-offs -->
+        <div class="trade-offs-box">
+          <div class="trade-off-header">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span class="trade-off-title">Disclosed Hardware Trade-offs (Non-Negotiable Facts):</span>
+          </div>
+          <ul id="trade-offs-list" class="trade-offs-list">
+            <!-- Populated dynamically -->
+          </ul>
+        </div>
+
+        <!-- Rejected Alternatives Drawer -->
+        <div class="rejections-section">
+          <h4 class="subhead">Deterministic Exclusions (Why alternatives did not qualify):</h4>
+          <div id="rejections-list" class="rejections-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Verified Compatible Accessories -->
+        <div class="accessories-section">
+          <div class="section-title-between">
+            <h4 class="subhead">Verified Compatible Accessories:</h4>
+            <span class="accessory-hint">Include / exclude to update cart</span>
+          </div>
+          <div id="accessories-list" class="accessories-list">
+            <!-- Populated dynamically with checkboxes -->
+          </div>
+        </div>
+
+        <!-- Proactive Compatible Add-Ons -->
+        <div id="proactive-addons-section" class="accessories-section hidden">
+          <div class="section-title-between">
+            <h4 class="subhead">Recommended Compatible Add-Ons:</h4>
+            <span class="accessory-hint">Optional • Verified port &amp; fit</span>
+          </div>
+          <div id="proactive-addons-list" class="accessories-list">
+            <!-- Populated dynamically with add-on cards -->
+          </div>
+        </div>
+
+        <!-- Bundle Financial Summary -->
+        <div class="bundle-summary-box">
+          <h4 class="subhead">Total Basket Summary (Authoritative Backend Sum):</h4>
+          <div id="bundle-line-items" class="bundle-line-items">
+            <!-- Populated dynamically -->
+          </div>
+          <div class="bundle-total-divider"></div>
+          <div class="bundle-total-row">
+            <span class="total-label">Verified Total:</span>
+            <span id="bundle-total-price" class="total-amount">₹67,297</span>
+          </div>
+          <div class="budget-margin-row">
+            <span>Customer Budget: <strong id="customer-budget-val">₹70,000</strong></span>
+            <span>Budget Margin: <strong id="budget-margin-val" class="green-text">₹2,703 Under</strong></span>
+          </div>
+        </div>
+
+        <!-- Purchase Review Placeholder Action -->
+        <div class="purchase-action-wrap">
+          <button id="authorize-btn" class="btn-action">
+            <span>Review &amp; Authorize Purchase</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+          <span class="action-note" id="purchase-action-note">Secures locked variant &amp; line items in session.</span>
+        </div>
+      </div>
+
+      <!-- No Match Error Card (Populated when NO_PRODUCT_MATCH) -->
+      <div id="no-match-card" class="no-match-card hidden">
+        <div class="error-badge">Zero Candidates Qualified</div>
+        <h3>No Catalog Match Satisfies All Hard Constraints</h3>
+        <p id="no-match-explanation" class="error-desc"></p>
+        <div class="guidance-box">
+          <strong>Recommended adjustments:</strong>
+          <ul>
+            <li>Increase your budget ceiling to allow higher memory tiers</li>
+            <li>Reduce RAM requirement (e.g. from 32GB to 16GB)</li>
+            <li>Relax physical weight constraints</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- No Category Match Card (Populated when NO_CATEGORY_MATCH) -->
+      <div id="no-category-card" class="no-category-card hidden">
+        <div class="category-error-badge">Category Not Carried</div>
+        <h3 id="no-category-title">Unsupported Product Category</h3>
+        <p id="no-category-explanation" class="error-desc"></p>
+        <div class="supported-categories-box">
+          <strong>Nexora Technologies specializes exclusively in:</strong>
+          <ul>
+            <li><strong>Laptops:</strong> High-performance developer ultrabooks and workstations</li>
+            <li><strong>Mice:</strong> Ergonomic Bluetooth and low-latency workspace mice</li>
+            <li><strong>Laptop Bags:</strong> Transit backpacks and protective sleeves</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Merchant Revenue Intelligence Layout (Milestone 5) -->
+  <main class="merchant-layout hidden" id="merchant-view">
+    <!-- Merchant Header & Disclaimer -->
+    <div class="merchant-banner">
+      <div class="banner-badge">CONTROLLED AI BUYER SIMULATION</div>
+      <p class="banner-text">
+        Evaluates 100 realistic buyer intents directly against Nexora's deterministic catalog rules and decision engine.
+        <span class="banner-disclaimer">AgentReady does not observe or control rankings from ChatGPT, Gemini, Perplexity, or other external AI systems.</span>
+      </p>
+    </div>
+
+    <!-- Merchant Top Control Bar -->
+    <div class="merchant-controls-bar">
+      <div class="merchant-status-wrap">
+        <div class="status-indicator-group">
+          <span class="merchant-version-pill" id="active-catalog-version-pill">Catalog Version A (Baseline)</span>
+          <span class="benchmark-version-pill" id="benchmark-version-pill">Benchmark v1.0 (100 Intents)</span>
+        </div>
+        <span class="last-run-time" id="last-run-timestamp">Status: Ready to evaluate</span>
+      </div>
+      <div class="merchant-action-btns">
+        <button id="run-benchmark-btn" class="btn-primary">
+          <span>▶ Run 100-Intent Benchmark</span>
+        </button>
+        <button id="run-experiment-btn" class="btn-secondary">
+          <span>▶ Run Before/After Experiment</span>
+        </button>
+        <button id="reset-experiment-btn" class="btn-secondary" title="Reset experiment state to start a clean one-fix causal experiment">
+          <span>🔄 Reset / Start New Experiment</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Benchmark State Machine Banner -->
+    <div id="benchmark-status-banner" class="benchmark-status-banner">
+      <div class="benchmark-status-card not-run">
+        <div class="status-indicator">⚪ Benchmark Status: <strong>NOT RUN</strong></div>
+        <div class="status-desc">Click <strong>"▶ Run 100-Intent Benchmark"</strong> above to validate and evaluate 100 buyer intents.</div>
+      </div>
+    </div>
+
+    <!-- Overview Metrics Grid -->
+    <section class="merchant-section" aria-label="AI Commerce Overview">
+      <div class="section-title-wrap">
+        <h3>AI Commerce Overview</h3>
+        <span class="section-subtitle">Controlled buyer simulation outcomes across 8 workload categories</span>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">Buyer Intents Tested</div>
+          <div class="metric-value" id="m-metric-total-intents">—</div>
+          <div class="metric-footer" id="m-metric-supported-sub">Benchmark not run</div>
+        </div>
+        <div class="metric-card card-accent">
+          <div class="metric-label">Product Match Rate</div>
+          <div class="metric-value green-text" id="m-metric-match-rate">—</div>
+          <div class="metric-footer" id="m-metric-match-denom">Excludes unsupported categories</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Hard Constraint Adherence</div>
+          <div class="metric-value" id="m-metric-constraint-adherence">—</div>
+          <div class="metric-footer">RAM, Storage, GPU &amp; Budget checks</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Checkout-Ready Rate</div>
+          <div class="metric-value" id="m-metric-checkout-ready">—</div>
+          <div class="metric-footer">Reaches approval &amp; Razorpay ready</div>
+        </div>
+        <div class="metric-card card-opportunity">
+          <div class="metric-label">Catalog-Attributed Opportunity Value</div>
+          <div class="metric-value orange-text" id="m-metric-opportunity-value">—</div>
+          <div class="metric-footer">Lost/partial intent transaction value</div>
+        </div>
+      </div>
+      <div class="outcomes-tally-bar">
+        <div class="tally-pill green"><span class="dot"></span> <strong id="tally-won">—</strong> WON</div>
+        <div class="tally-pill blue"><span class="dot"></span> <strong id="tally-partial">—</strong> PARTIAL</div>
+        <div class="tally-pill red"><span class="dot"></span> <strong id="tally-lost">—</strong> LOST</div>
+        <div class="tally-pill gray"><span class="dot"></span> <strong id="tally-unsupported">—</strong> UNSUPPORTED CATEGORY</div>
+      </div>
+    </section>
+
+    <!-- Why Buyers Are Lost (Revenue Leakage Taxonomy) -->
+    <section class="merchant-section" aria-label="Revenue Leakage Analysis">
+      <div class="section-title-wrap">
+        <h3>Why Buyers Are Lost (Revenue Leakage)</h3>
+        <span class="section-subtitle">Normalized reason taxonomy for lost opportunities</span>
+      </div>
+      <div class="loss-reasons-grid" id="loss-reasons-container">
+        <div class="empty-state-notice">Benchmark not run. Click "Run 100-Intent Benchmark" to see failure taxonomy breakdown.</div>
+      </div>
+    </section>
+
+    <!-- Buyer Loss Detail Inspector: "Why Did We Lose This Buyer?" -->
+    <section class="merchant-section" aria-label="Buyer Request Detail View">
+      <div class="section-title-wrap flex-between">
+        <div>
+          <h3>"Why Did We Lose This Buyer?" — Query Inspector</h3>
+          <span class="section-subtitle">Inspect individual buyer queries, constraint breakdowns, and catalog gaps</span>
+        </div>
+        <div class="filter-controls">
+          <label for="intent-group-filter">Filter Workload:</label>
+          <select id="intent-group-filter" class="merchant-select">
+            <option value="all">All Groups (100)</option>
+            <option value="developer">Developer / Coding (20)</option>
+            <option value="gaming">Gaming (15)</option>
+            <option value="student_budget">Student / Budget (15)</option>
+            <option value="travel_portability">Travel / Portability (10)</option>
+            <option value="creator">Creator / Workstation (10)</option>
+            <option value="office_workspace">Office / Workspace (10)</option>
+            <option value="comparison">Comparison / Decision (10)</option>
+            <option value="bundle_accessory">Bundle / Accessory (10)</option>
+          </select>
+        </div>
+      </div>
+      <div class="intents-table-wrap">
+        <table class="intents-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Group</th>
+              <th>Buyer Request</th>
+              <th>Simulated Status</th>
+              <th>Matched / Closest SKU</th>
+              <th>Loss Reason Code</th>
+              <th>Catalog-Attributed Opportunity</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="intents-table-body">
+            <tr><td colspan="8" class="text-center">Run benchmark to populate buyer intent telemetry...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Prioritized Catalog Improvements (Approval Gate) -->
+    <section class="merchant-section" aria-label="Catalog Fixes">
+      <div class="section-title-wrap">
+        <h3>Prioritized Catalog Improvements</h3>
+        <span class="section-subtitle">Authoritative enrichments sourced from manufacturer spec sheets — requires explicit merchant approval</span>
+      </div>
+      <div class="fixes-grid" id="fixes-container">
+        <!-- Injected dynamically -->
+      </div>
+    </section>
+
+    <!-- Before vs After Experiment Comparison -->
+    <section class="merchant-section" id="experiment-section" aria-label="Before vs After Uplift">
+      <div class="section-title-wrap">
+        <h3>Before vs After Experiment Uplift (Proof of Improvement)</h3>
+        <span class="section-subtitle">Controlled side-by-side evaluation of Baseline Catalog (Version A) vs Enriched Catalog (Version B) on identical 100 intents</span>
+      </div>
+      <div id="experiment-results-wrap" class="experiment-results-wrap">
+        <div class="empty-state-notice">
+          Click <strong>"⚡ Run Before/After Experiment"</strong> to evaluate Version A vs Version B side-by-side.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Buyer Loss Drilldown Detail Modal -->
+  <div id="drilldown-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-dialog modal-large">
+      <div class="modal-header">
+        <div class="review-title-wrap">
+          <span class="review-step-tag">BUYER INTENT AUDIT</span>
+          <h3 id="drilldown-title">Why Did We Lose This Buyer?</h3>
+        </div>
+        <button id="close-drilldown-btn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" id="drilldown-body">
+        <!-- Injected dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Comparison Modal -->
+  <div id="compare-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Verified Product Comparison</h3>
+        <button id="close-modal-btn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" id="compare-body">
+        <!-- Injected dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Immutable Purchase Review Screen Overlay -->
+  <div id="review-overlay" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal-dialog modal-large">
+      <div class="modal-header">
+        <div class="review-title-wrap">
+          <span class="review-step-tag">PAYMENT AUTHORIZATION</span>
+          <h3>Immutable Purchase Authorization Review</h3>
+        </div>
+        <button id="close-review-btn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="review-callout">
+          <strong>Deterministic Commerce Lock:</strong> The product SKU, variant ID, and accessory line items below have been verified against active warehouse inventory. Prices are locked and non-modifiable by client-side scripting.
+        </div>
+
+        <div id="review-content" class="review-content">
+          <!-- Injected dynamically -->
+        </div>
+
+        <div class="review-audit-bar">
+          <span>Session Audit ID: <strong id="review-session-id" class="mono">--</strong></span>
+          <span>Verified Gate Status: <strong id="gate-status-text" class="green-text">AUTHORIZED_PENDING_GATEWAY</strong></span>
+        </div>
+
+        <!-- Milestone 4: Razorpay Test-Mode Payment Gateway Action -->
+        <div id="payment-action-box" class="payment-action-box">
+          <button id="proceed-payment-btn" class="btn-razorpay">
+            <span class="razorpay-icon">⚡</span>
+            <span id="proceed-payment-text">Approve &amp; Pay with Razorpay (Test Mode)</span>
+          </button>
+          <div class="test-mode-note">
+            🔒 <strong>Simulated Razorpay Test Mode:</strong> No real money moves. Key prefix: <code class="mono">rzp_test_...</code>
+          </div>
+        </div>
+
+        <!-- Payment Lifecycle States Card -->
+        <div id="payment-status-card" class="payment-status-card hidden">
+          <div class="payment-status-header">
+            <span id="payment-status-icon" class="status-icon">⏳</span>
+            <h4 id="payment-status-title">Validating purchase...</h4>
+          </div>
+          <p id="payment-status-desc" class="payment-status-desc">Contacting merchant server to confirm stock and lock order...</p>
+          <div id="payment-details-box" class="payment-details-box hidden">
+            <div>Order ID: <strong id="order-ref-id" class="mono">--</strong></div>
+            <div>Razorpay Ref: <strong id="razorpay-ref-id" class="mono">--</strong></div>
+            <div>Payment ID: <strong id="payment-ref-id" class="mono">--</strong></div>
+            <div>Amount: <strong id="order-amount-paid" class="green-text">--</strong></div>
+            <div>Status: <strong id="order-final-status" class="status-pill">--</strong></div>
+          </div>
+          <div id="payment-retry-wrap" class="payment-retry-wrap hidden">
+            <button id="retry-payment-btn" class="btn-retry">
+              <span>↻ Retry Payment</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Official Razorpay Checkout Library -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

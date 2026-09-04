@@ -1,0 +1,25 @@
+{
+  "name": "agentready",
+  "version": "0.1.0",
+  "description": "AgentReady: Deterministic AI Commerce Decision Engine for Nexora Technologies (Track 01)",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/**/*.test.ts",
+    "start": "node --experimental-strip-types src/server/server.ts",
+    "demo": "node --experimental-strip-types src/demo/runDemo.ts",
+    "demo:agent": "node --experimental-strip-types src/demo/runAgentDemo.ts",
+    "demo:customer": "node --experimental-strip-types src/demo/runCustomerDemo.ts"
+  },
+  "keywords": [
+    "agentic-commerce",
+    "razorpay",
+    "deterministic-engine",
+    "ecommerce"
+  ],
+  "author": "AgentReady Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}
