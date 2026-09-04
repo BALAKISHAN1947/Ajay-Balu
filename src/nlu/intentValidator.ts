@@ -91,7 +91,7 @@ export function validateCustomerIntent(input: unknown): ValidationResult {
   }
 
   // 4. Budget object validation (if provided)
-  if (obj.budget !== undefined) {
+  if (obj.budget !== undefined && obj.budget !== null) {
     if (typeof obj.budget !== 'object' || Array.isArray(obj.budget)) {
       errors.push('"budget" must be an object if provided.');
     } else {
@@ -127,7 +127,9 @@ export function validateCustomerIntent(input: unknown): ValidationResult {
     requested_category_raw: obj.requested_category_raw,
     unsupported_categories: Array.isArray(obj.unsupported_categories) ? obj.unsupported_categories : [],
     is_category_supported: obj.is_category_supported ?? (obj.required_categories?.length > 0 && (!obj.unsupported_categories || obj.unsupported_categories.length === 0)),
-    budget: obj.budget ?? (hard.max_total_budget ? { currency: 'INR', total_ceiling: hard.max_total_budget, is_hard_ceiling: true } : undefined),
+    budget: (obj.budget && typeof obj.budget === 'object' && !Array.isArray(obj.budget))
+      ? obj.budget
+      : (hard.max_total_budget ? { currency: 'INR', total_ceiling: hard.max_total_budget, is_hard_ceiling: true } : undefined),
     hard_constraints: {
       max_total_budget: hard.max_total_budget,
       max_laptop_price: hard.max_laptop_price,

@@ -9,7 +9,7 @@ import { type ICatalogRepository, getCatalogRepository } from '../repository/cat
 import { SessionManager, getSessionManager } from '../session/sessionManager.ts';
 import { AgentTools } from '../tools/agentTools.ts';
 import { evaluateProactiveCrossSells } from '../engine/bundleEngine.ts';
-import { normalizeBudget, normalizeRam, normalizeCategories } from '../nlu/normalization.ts';
+import { normalizeBudget, normalizeRam, normalizeCategories, extractCategories } from '../nlu/normalization.ts';
 
 /**
  * PRODUCT TRUST PRINCIPLE (Track 01):
@@ -774,7 +774,8 @@ export class AgentOrchestrator {
     // Step 2: JSON Parsing
     let parsedJson: unknown;
     try {
-      parsedJson = JSON.parse(rawIntentJson);
+      const sanitized = typeof rawIntentJson === 'string' ? rawIntentJson.replace(/:\s*undefined\b/g, ': null') : rawIntentJson;
+      parsedJson = JSON.parse(sanitized);
     } catch (err: any) {
       const response: AgentResponse = {
         session_id: sessionId,
@@ -786,6 +787,84 @@ export class AgentOrchestrator {
       };
       this.sessionManager.recordAgentResponse(sessionId, response);
       return response;
+    }
+
+    // Step 2b: Canonical Normalization before Schema Validation
+    if (parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)) {
+      const obj = parsedJson as Record<string, any>;
+
+      if (!obj.raw_query) {
+        obj.raw_query = userMessage;
+      }
+
+      // If soft_preferences is missing or not an object: create it
+      if (!obj.soft_preferences || typeof obj.soft_preferences !== 'object' || Array.isArray(obj.soft_preferences)) {
+        obj.soft_preferences = {};
+      }
+
+      // If soft_preferences.weights is missing or invalid: use canonical defaults
+      if (!obj.soft_preferences.weights || typeof obj.soft_preferences.weights !== 'object' || Array.isArray(obj.soft_preferences.weights)) {
+        obj.soft_preferences.weights = {
+          portability: 0.40,
+          battery: 0.35,
+          longevity: 0.25
+        };
+      } else {
+        const w = obj.soft_preferences.weights;
+        if (typeof w.portability !== 'number' || isNaN(w.portability) || w.portability < 0) {
+          w.portability = 0.40;
+        }
+        if (typeof w.battery !== 'number' || isNaN(w.battery) || w.battery < 0) {
+          w.battery = 0.35;
+        }
+        if (typeof w.longevity !== 'number' || isNaN(w.longevity) || w.longevity < 0) {
+          w.longevity = 0.25;
+        }
+      }
+
+      // If hard_constraints is missing or not an object: create it
+      if (!obj.hard_constraints || typeof obj.hard_constraints !== 'object' || Array.isArray(obj.hard_constraints)) {
+        obj.hard_constraints = {};
+      }
+
+      // If hard_constraints.in_stock_only is undefined: set true
+      if (obj.hard_constraints.in_stock_only === undefined) {
+        obj.hard_constraints.in_stock_only = true;
+      }
+
+      // If budget exists as a valid object and hard_constraints.max_total_budget is undefined:
+      // derive hard_constraints.max_total_budget = budget.total_ceiling
+      if (
+        obj.budget &&
+        typeof obj.budget === 'object' &&
+        !Array.isArray(obj.budget)
+      ) {
+        if (typeof obj.budget.currency !== 'string') {
+          obj.budget.currency = 'INR';
+        }
+        if (obj.budget.is_hard_ceiling === undefined) {
+          obj.budget.is_hard_ceiling = true;
+        }
+        if (typeof obj.budget.total_ceiling === 'number' && obj.hard_constraints.max_total_budget === undefined) {
+          obj.hard_constraints.max_total_budget = obj.budget.total_ceiling;
+        }
+      }
+
+      // Category extraction on ORIGINAL user message
+      const catExtraction = extractCategories(userMessage);
+      if (catExtraction.unsupported.length > 0) {
+        obj.unsupported_categories = catExtraction.unsupported;
+        obj.is_category_supported = false;
+        if (catExtraction.supported.length === 0) {
+          obj.required_categories = [];
+        }
+      } else if ((!obj.required_categories || !Array.isArray(obj.required_categories) || obj.required_categories.length === 0) && catExtraction.supported.length > 0) {
+        obj.required_categories = catExtraction.supported;
+      }
+
+      if (!Array.isArray(obj.required_categories)) {
+        obj.required_categories = catExtraction.supported;
+      }
     }
 
     // Step 3: Schema Validation

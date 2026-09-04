@@ -349,9 +349,9 @@ export class GroqLLMProvider implements ILLMProvider {
     const prompt = `You are a strict commerce NLU parser for electronics. Output ONLY valid JSON matching this schema:
 {
   "raw_query": string,
-  "target_workload": "coding" | "gaming" | "work" | undefined,
+  "target_workload": "coding" | "gaming" | "work" | null,
   "required_categories": ("laptop" | "mouse" | "bag")[],
-  "budget": { "currency": "INR", "total_ceiling": number, "is_hard_ceiling": boolean, "raw_expression": string } | undefined,
+  "budget": { "currency": "INR", "total_ceiling": number, "is_hard_ceiling": boolean, "raw_expression": string } | null,
   "hard_constraints": { "max_total_budget"?: number, "min_ram_gb"?: number, "min_storage_gb"?: number, "in_stock_only": true, "max_weight_g"?: number },
   "soft_preferences": { "max_preferred_weight_g"?: number, "min_preferred_battery_wh"?: number, "prefer_bluetooth_mouse"?: boolean, "preferred_bag_type"?: string, "weights": { "portability": number, "battery": number, "longevity": number } },
   "compatibility_requirements": { "bag_must_fit_laptop": boolean, "mouse_must_interface_without_adapters": boolean }
@@ -381,16 +381,18 @@ Customer query: "${rawQuery}"`;
       }
 
       const trimmed = fullContent.trim();
+      let extracted = trimmed;
       const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
       if (codeBlockMatch) {
-        return codeBlockMatch[1].trim();
+        extracted = codeBlockMatch[1].trim();
+      } else {
+        const firstBrace = trimmed.indexOf('{');
+        const lastBrace = trimmed.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          extracted = trimmed.slice(firstBrace, lastBrace + 1).trim();
+        }
       }
-      const firstBrace = trimmed.indexOf('{');
-      const lastBrace = trimmed.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        return trimmed.slice(firstBrace, lastBrace + 1).trim();
-      }
-      return trimmed;
+      return extracted.replace(/:\s*undefined\b/g, ': null');
     } catch (err: any) {
       console.warn(`[GroqLLMProvider] Groq intent extraction failed (${err.message}). Falling back to deterministic NLU.`);
       return this.fallback.generateStructuredIntent(rawQuery);
