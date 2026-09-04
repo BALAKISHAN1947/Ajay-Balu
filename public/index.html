@@ -63,10 +63,11 @@
             <p>Welcome to <strong>Nexora Technologies</strong>. I can assist you with finding laptops, mice, and bags tailored to your workflow and budget.</p>
             <p class="trust-notice"><span class="verified-tag">VERIFIED</span> All pricing, inventory, specs, and physical dimensions are calculated deterministically against our live catalog.</p>
             <div class="quick-prompts">
-              <span class="quick-prompt-label">Try asking:</span>
-              <button class="quick-btn" data-query="I need a laptop for coding under ₹70,000. I travel every day, so I want something light with good battery life, at least 16GB RAM, and I also need a mouse and laptop bag.">Coding laptop under ₹70k with mouse and bag</button>
-              <button class="quick-btn" data-query="I need a laptop for work">I need a laptop for work (Clarification test)</button>
-              <button class="quick-btn" data-query="I need a laptop under 35k with 32GB RAM">32GB RAM under 35k (Rejection test)</button>
+              <span class="quick-prompt-label">Optional prompt ideas (or type any question below):</span>
+              <button class="quick-btn" data-query="I need a laptop for coding under ₹70,000. I travel every day, so I want something light with good battery life, at least 16GB RAM, and I also need a mouse and laptop bag.">Coding laptop under ₹70k with mouse &amp; bag</button>
+              <button class="quick-btn" data-query="Bhai mujhe coding ke liye laptop chahiye 60k ke andar">Hinglish: 60k ke andar</button>
+              <button class="quick-btn" data-query="I need a laptop under 25000">Laptop under 25000 (Trade-off demo)</button>
+              <button class="quick-btn" data-query="Show me the best option and one alternative">Best option and one alternative</button>
             </div>
           </div>
         </div>
@@ -249,12 +250,16 @@
             <span>Customer Budget: <strong id="customer-budget-val">₹70,000</strong></span>
             <span>Budget Margin: <strong id="budget-margin-val" class="green-text">₹2,703 Under</strong></span>
           </div>
+          <!-- Over-Budget Inline Action Box -->
+          <div id="overbudget-action-box" class="overbudget-action-box hidden">
+            <!-- Injected dynamically when basket > budget -->
+          </div>
         </div>
 
-        <!-- Purchase Review Placeholder Action -->
+        <!-- Direct Razorpay Checkout Action -->
         <div class="purchase-action-wrap">
           <button id="authorize-btn" class="btn-action">
-            <span>Review &amp; Authorize Purchase</span>
+            <span id="authorize-btn-text">Review &amp; Pay with Razorpay</span>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </button>
           <span class="action-note" id="purchase-action-note">Secures locked variant &amp; line items in session.</span>
@@ -511,7 +516,7 @@
         <div id="payment-action-box" class="payment-action-box">
           <button id="proceed-payment-btn" class="btn-razorpay">
             <span class="razorpay-icon">⚡</span>
-            <span id="proceed-payment-text">Approve &amp; Pay with Razorpay (Test Mode)</span>
+            <span id="proceed-payment-text">Review &amp; Pay with Razorpay</span>
           </button>
           <div class="test-mode-note">
             🔒 <strong>Simulated Razorpay Test Mode:</strong> No real money moves. Key prefix: <code class="mono">rzp_test_...</code>

@@ -121,10 +121,10 @@ async function submitUserQuery(text) {
   chatInput.disabled = true;
   sendBtn.disabled = true;
 
-  setAgentState('THINKING', 'Understanding your requirements…');
+  setAgentState('THINKING', 'Understanding your request...');
   showLoadingState();
 
-  // Temporary in-chat processing indicator
+  // Temporary in-chat processing indicator (Understanding your requirements… / Understanding your request...)
   const procMsg = document.createElement('div');
   procMsg.className = 'message agent-message processing-msg';
   procMsg.innerHTML = `
@@ -135,7 +135,7 @@ async function submitUserQuery(text) {
     </div>
     <div class="message-body" style="display: flex; align-items: center; gap: 0.5rem; color: #38bdf8;">
       <span class="inline-spinner"></span>
-      <span class="proc-text">Understanding your requirements…</span>
+      <span class="proc-text">Understanding your request...</span>
     </div>
   `;
   chatMessages.appendChild(procMsg);
@@ -150,8 +150,10 @@ async function submitUserQuery(text) {
     setAgentState('THINKING', stageText);
   };
 
-  const timer1 = setTimeout(() => updateStage('Checking Nexora’s catalog…'), 550);
-  const timer2 = setTimeout(() => updateStage('Comparing available options…'), 1100);
+  // Checking the verified catalog... (Checking Nexora’s catalog…)
+  const timer1 = setTimeout(() => updateStage('Checking the verified catalog...'), 450);
+  // Comparing available options… (Comparing available options...)
+  const timer2 = setTimeout(() => updateStage('Comparing available options...'), 950);
 
   const startTime = Date.now();
 
@@ -173,8 +175,9 @@ async function submitUserQuery(text) {
     }
 
     const data = await res.json();
+    updateStage('Recommendation ready.');
 
-    // Bounded ~1.6s total customer experience for recommendations
+    // Bounded customer experience (~1600ms): 1600 - elapsed
     const elapsed = Date.now() - startTime;
     const remainingDelay = Math.max(0, 1600 - elapsed);
     if (remainingDelay > 0) {
@@ -576,14 +579,69 @@ function updateBundleSummary(lineItems, total, budget, margin) {
   budgetMarginVal.className = isOverBudget ? 'red-text' : 'green-text';
 
   const actionNote = document.getElementById('purchase-action-note') || document.querySelector('.action-note');
+  const authBtnText = document.getElementById('authorize-btn-text') || authorizeBtn;
+  if (authBtnText) authBtnText.textContent = 'Review & Pay with Razorpay';
+
+  const overbudgetBox = document.getElementById('overbudget-action-box');
+
   if (isOverBudget) {
     authorizeBtn.disabled = true;
     authorizeBtn.classList.add('disabled');
     authorizeBtn.style.opacity = '0.5';
     authorizeBtn.style.cursor = 'not-allowed';
     if (actionNote) {
-      actionNote.textContent = 'Remove an add-on or increase your budget to continue.';
+      actionNote.textContent = 'Basket exceeds budget. Remove an accessory or increase budget directly below.';
       actionNote.style.color = '#ef4444';
+    }
+
+    if (overbudgetBox) {
+      overbudgetBox.classList.remove('hidden');
+      const accessories = (currentRecommendation?.accessories || []);
+      const accessoryRows = accessories.length > 0
+        ? accessories.map((acc) => `
+            <div class="overbudget-remove-row">
+              <span>${acc.name} (+₹${acc.price_inr.toLocaleString('en-IN')})</span>
+              <button class="btn-remove-sm" onclick="handleInlineRemoveAccessory('${acc.sku}')">Remove accessory</button>
+            </div>
+          `).join('')
+        : '<p style="font-size:0.8rem; color:#94a3b8;">No accessories to remove.</p>';
+
+      overbudgetBox.innerHTML = `
+        <div class="overbudget-header">
+          <span>⚠️ Basket Exceeds Budget</span>
+        </div>
+        <div class="overbudget-arithmetic">
+          <div class="overbudget-arithmetic-item"><span>Current basket:</span><strong>₹${total.toLocaleString('en-IN')}</strong></div>
+          <div class="overbudget-arithmetic-item"><span>Budget:</span><strong>₹${budget.toLocaleString('en-IN')}</strong></div>
+          <div class="overbudget-arithmetic-item"><span style="color:#ef4444;">Over budget:</span><strong style="color:#ef4444;">₹${delta.toLocaleString('en-IN')}</strong></div>
+        </div>
+        <div class="overbudget-actions">
+          <div style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.15rem;">Selected Accessories:</div>
+          ${accessoryRows}
+          <div style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-top: 0.5rem;">Increase Budget (Instant Activation):</div>
+          <div class="inline-budget-adjust">
+            <input type="number" id="inline-budget-input" class="inline-budget-input" value="${total}" min="${total}" step="500" />
+            <button id="inline-budget-btn" class="btn-increase-budget">Increase Budget to ₹${total.toLocaleString('en-IN')}</button>
+          </div>
+        </div>
+      `;
+
+      const budgetInput = document.getElementById('inline-budget-input');
+      const budgetBtn = document.getElementById('inline-budget-btn');
+      if (budgetInput && budgetBtn) {
+        budgetInput.addEventListener('input', () => {
+          const val = Number(budgetInput.value);
+          if (val > 0) {
+            budgetBtn.textContent = `Increase Budget to ₹${val.toLocaleString('en-IN')}`;
+          }
+        });
+        budgetBtn.addEventListener('click', async () => {
+          const val = Number(budgetInput.value);
+          if (val > 0) {
+            await handleInlineBudgetIncrease(val);
+          }
+        });
+      }
     }
   } else {
     authorizeBtn.disabled = false;
@@ -594,8 +652,41 @@ function updateBundleSummary(lineItems, total, budget, margin) {
       actionNote.textContent = 'Secures locked variant & line items in session.';
       actionNote.style.color = '';
     }
+    if (overbudgetBox) {
+      overbudgetBox.classList.add('hidden');
+      overbudgetBox.innerHTML = '';
+    }
   }
 }
+
+window.handleInlineRemoveAccessory = async function (sku) {
+  const checkboxEl = document.querySelector(`.accessory-checkbox[data-sku="${sku}"]`);
+  await toggleAccessoryBackend(sku, false, checkboxEl || { checked: false });
+};
+
+window.handleInlineBudgetIncrease = async function (newBudget) {
+  try {
+    const res = await fetch(`/api/v1/session/${currentSessionId}/budget`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ budget: newBudget })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Budget update failed: ${data.error}`);
+      return;
+    }
+    const rec = data.latest_recommendation;
+    currentRecommendation = rec;
+    renderRecommendation(rec);
+    appendAgentMessage(
+      `Budget updated to **₹${newBudget.toLocaleString('en-IN')}**. Current basket total of **₹${rec.total_price_inr.toLocaleString('en-IN')}** is within budget. Review & Pay with Razorpay is enabled immediately!`,
+      'Budget Updated'
+    );
+  } catch (err) {
+    alert(`Failed to update budget: ${err.message}`);
+  }
+};
 
 // Compare Action
 compareBtn.addEventListener('click', async () => {
@@ -856,8 +947,12 @@ async function handleProceedPayment() {
     return;
   }
   const btn = document.getElementById('proceed-payment-btn') || proceedPaymentBtn;
-  if (btn) btn.disabled = true;
-  updatePaymentState('VALIDATING', 'Securing merchant approval and revalidating warehouse stock...');
+  if (btn) {
+    btn.disabled = true;
+    const btnText = btn.querySelector('#proceed-payment-text') || btn;
+    btnText.textContent = 'Preparing secure Razorpay checkout...';
+  }
+  updatePaymentState('VALIDATING', 'Preparing secure Razorpay checkout...');
 
   try {
     // Step 1: Customer Approval Gate
@@ -960,7 +1055,7 @@ async function handleProceedPayment() {
             })
           });
         } catch {}
-        updatePaymentState('FAILED', response.error?.description || 'Transaction was declined or failed.');
+        updatePaymentState('FAILED', 'Payment failed. Your selected basket is preserved.');
       });
       rzp.open();
     } else {
@@ -976,7 +1071,12 @@ function handleRetryPayment() {
   paymentStatusCard.classList.add('hidden');
   paymentActionBox.classList.remove('hidden');
   paymentRetryWrap.classList.add('hidden');
-  proceedPaymentBtn.disabled = false;
+  const btn = document.getElementById('proceed-payment-btn') || proceedPaymentBtn;
+  if (btn) {
+    btn.disabled = false;
+    const btnText = btn.querySelector('#proceed-payment-text') || btn;
+    btnText.textContent = 'Review & Pay with Razorpay';
+  }
 }
 
 proceedPaymentBtn.addEventListener('click', handleProceedPayment);

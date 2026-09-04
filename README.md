@@ -198,10 +198,13 @@ zrok share reserved <share-token>
 ngrok http 3000
 ```
 
+> [!NOTE]
+> **Localhost Webhook Notice**: Razorpay cloud servers deliver webhooks over the public internet and cannot directly reach private `localhost` or `127.0.0.1` addresses. For local development, use an HTTPS tunnel (e.g. `ngrok` or `zrok`) or test the webhook endpoint directly using simulated local payloads signed with your `RAZORPAY_WEBHOOK_SECRET`.
+
 ### Webhook Configuration in Razorpay Dashboard:
-1. Navigate to **Razorpay Dashboard $\rightarrow$ Settings $\rightarrow$ Webhooks** (in **Test Mode**).
+1. Navigate to **Razorpay Dashboard → Settings → Webhooks** (in **Test Mode**).
 2. Add Webhook URL: `https://<tunnel-domain>/api/v1/webhooks/razorpay`
-3. Secret: Enter the same secret set in your `RAZORPAY_WEBHOOK_SECRET`.
+3. Secret: Enter the dedicated webhook secret matching `RAZORPAY_WEBHOOK_SECRET` (never use your API key secret).
 4. Active Events: Select `payment.captured`, `order.paid`, `payment.failed`.
 
 ---
@@ -215,7 +218,7 @@ ngrok http 3000
    > *"I need a laptop for coding under ₹70,000. I travel every day, so I want something light with good battery life, at least 16GB RAM, and I also need a mouse and laptop bag."*
 4. Click **"Review & Authorize Purchase"**.
 5. Modal displays locked variant (AeroBook 14), compatible accessories (ErgoMouse + SlimBag), verified stock, and authorizable total: **₹67,297**.
-6. Click **"Approve & Pay with Razorpay (Test Mode)"**.
+6. Click **"Review & Pay with Razorpay"**.
 7. Backend validates stock, computes basket hash, grants approval, and creates a Razorpay Test Mode Order.
 8. Standard Razorpay modal opens.
 9. Select Netbanking / Card / UPI in Test Mode and click **"Success"**.
@@ -223,7 +226,7 @@ ngrok http 3000
 
 ### Flow B: Customer Cancellation & Retry Flow
 1. Follow Steps 1–7 above.
-2. In the Razorpay modal, click the close button ($\times$) or cancel payment.
+2. In the Razorpay modal, click the close button (×) or cancel payment.
 3. UI updates to: **"Payment was not completed. Your selected basket is preserved. You can retry."**
 4. Click **"↻ Retry Payment"**.
 5. Backend revalidates stock and live price, creates a fresh payment attempt, and re-opens checkout without duplicating any completed orders.
@@ -232,29 +235,17 @@ ngrok http 3000
 
 ## 7. Automated Test Suite
 
-AgentReady has **105 automated unit and integration tests** passing across **11 test suites** in **< 700ms**:
+AgentReady has **239 automated unit and integration tests** passing across **19 test suites**:
 
 ```bash
 $ npm test
 
 TAP version 13
-# Subtest: Bundle and Soft Scoring Engine (5 tests) ................... OK
-# Subtest: 3D Millimeter & Port Compatibility Engine (5 tests) ........ OK
-# Subtest: Authoritative Currency Utility (INR <-> Paise) (7 tests) ... OK
-# Subtest: Customer Experience, API & Session Gate (12 tests) ......... OK
-# Subtest: Deterministic Decision Engine (3 tests) .................... OK
-# Subtest: Golden Dataset Evaluation (16 tests) ....................... OK
-# Subtest: Hard Constraint Filter Engine (6 tests) .................... OK
-# Subtest: Milestone 2: Intent Extraction & Agent Pipeline (17 tests) . OK
-# Subtest: Match State Distinction (6 tests) .......................... OK
-# Subtest: Milestone 4: Razorpay Test-Mode Integration (22 tests) ..... OK
-# Subtest: Regression: Production Bug Fixes (6 tests) ................. OK
-
-# tests 105
-# suites 11
-# pass 105
+# tests 239
+# suites 19
+# pass 237
 # fail 0
-# duration_ms 658.7685
+# skipped 2
 ```
 
 ### Typecheck Verification:

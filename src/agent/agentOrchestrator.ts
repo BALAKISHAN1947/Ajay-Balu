@@ -466,9 +466,9 @@ export class AgentOrchestrator {
     }
 
     // Contextual Handler E: Natural Language Comparison & Evidence-Based Decision Support
-    // ("Compare AeroBook 14 and DevForge 15", "Which is better?", "Which one should I buy for coding and daily travel?")
+    // ("Compare AeroBook 14 and DevForge 15", "Which is better?", "Which one should I buy for coding and daily travel?", "Show me the best option and one alternative")
     const isComparisonOrDecision =
-      /\b(compare|comparison|versus|\bvs\b|which is better|which one is better|which should i buy|which one should i buy)\b/i.test(lower);
+      /\b(compare|comparison|versus|\bvs\b|which is better|which one is better|which should i buy|which one should i buy|best option and (?:one )?alternative|show me (?:the )?best option|one alternative)\b/i.test(lower);
 
     if (isComparisonOrDecision) {
       const allLaptops = this.repo.getLaptops();

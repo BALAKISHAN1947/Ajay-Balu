@@ -47,15 +47,15 @@ export function detectAmbiguity(intent: CustomerIntent, rawQuery: string): Ambig
   const hasWorkload = intent.target_workload !== undefined && intent.target_workload !== 'work';
 
   if (intent.required_categories.includes('laptop') && !hasBudget && !hasRam && !hasWorkload) {
-    // Check if query is just generic "laptop for work"
-    if (/\b(laptop for work|need a laptop|looking for a laptop|show me laptops)\b/i.test(lower)) {
-      const question = 'To find the best match, what is your approximate budget ceiling and primary technical requirement (e.g. coding with 16GB RAM, or general office tasks)?';
+    // Check if query is generic without budget or workload
+    if (/\b(laptop for work|need a laptop|looking for a laptop|show me laptops|help me choose|don't know anything|dont know anything|choose a laptop)\b/i.test(lower)) {
+      const question = 'To find the best match, what is your approximate budget ceiling and primary use case (e.g. coding with 16GB RAM, college studies, or office tasks)?';
       return {
         isAmbiguous: true,
         clarificationQuestion: question,
         ambiguousField: {
           field: 'budget_and_specs',
-          reason: 'Query specifies laptop for work without budget ceiling or memory specifications.',
+          reason: 'Query specifies laptop without budget ceiling or workload specifications.',
           clarification_question: question,
           is_critical: true
         }

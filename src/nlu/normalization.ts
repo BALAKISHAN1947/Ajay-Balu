@@ -189,6 +189,17 @@ export function normalizeBudget(text: string): ParsedBudget | null {
     if (res) return res;
   }
 
+  // 2b. Look for post-positioned Hinglish/colloquial budget keywords (e.g. "60k ke andar", "30k ke aas paas", "60k tak")
+  const postHinglishMatch = lower.match(/(?:₹|rs\.?|inr\s*)?(\d{1,3}(?:,\d{3})+|\d+)\s*(k|thousand|lakh)?\s*(?:ke\s*andar|andar|tak|ke\s*under|ke\s*aas\s*paas|aas\s*paas)\b/i);
+  if (postHinglishMatch) {
+    const isApprox = /aas\s*paas/i.test(postHinglishMatch[0]);
+    const res = processNumber(postHinglishMatch[1], postHinglishMatch[2]?.toLowerCase(), postHinglishMatch[0]);
+    if (res) {
+      res.isHardCeiling = !isApprox;
+      return res;
+    }
+  }
+
   // 3. Look for numbers explicitly preceded by budget keywords (e.g. "under 70k", "budget of 65000", "under 4000")
   const keywordMatch = lower.match(/\b(under|below|less than|max|maximum|at most|budget of|within|up to|around|approx|about)\s*(?:₹|rs\.?|inr\s*)?(\d{1,3}(?:,\d{3})+|\d+)\s*(k|thousand|lakh)?/i);
   if (keywordMatch) {
@@ -304,7 +315,7 @@ export function normalizeCategories(text: string): ProductCategory[] {
   }
 
   // Default to laptop only if technical laptop hardware specs or computing workloads are present
-  if (categories.size === 0 && /\b(ram|ssd|battery life|processor|cpu|coding|programming|developer|software dev|gaming|workstation)\b/i.test(lower)) {
+  if (categories.size === 0 && /\b(ram|ssd|battery life|processor|cpu|coding|programming|developer|software dev|gaming|workstation|python)\b/i.test(lower)) {
     categories.add('laptop');
   }
 
@@ -360,7 +371,8 @@ export function extractCategories(text: string): CategoryExtractionResult {
       const candidate = genericMatch[1].trim();
       const nonProductWords = [
         'laptop', 'pc', 'computer', 'machine', 'something', 'anything',
-        'device', 'gear', 'item', 'one', 'good', 'cheap', 'best', 'durable', 'options'
+        'device', 'gear', 'item', 'one', 'good', 'cheap', 'best', 'durable', 'options',
+        'college', 'student', 'school', 'study', 'python', 'coding', 'gaming'
       ];
       const words = candidate.split(/\s+/);
       const isAllNonProduct = words.every((w) => nonProductWords.includes(w));

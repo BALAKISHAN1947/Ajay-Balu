@@ -37,7 +37,7 @@ export class DeterministicNLUProvider implements ILLMProvider {
     }
 
     let targetWorkload: string | undefined = undefined;
-    if (/\b(coding|software|developer|development|programming|dev|docker|code)\b/i.test(lower)) {
+    if (/\b(coding|software|developer|development|programming|dev|docker|code|python)\b/i.test(lower)) {
       targetWorkload = 'coding';
     } else if (/\b(gaming|game|games)\b/i.test(lower)) {
       targetWorkload = 'gaming';
@@ -45,11 +45,17 @@ export class DeterministicNLUProvider implements ILLMProvider {
       targetWorkload = 'work';
     }
 
+    const isCheap = /\b(cheap|cheapest|budget|affordable|college|student)\b/i.test(lower);
+
     // Coding workload requires at least 16GB RAM for modern IDEs / Docker
     let effectiveMinRam = ram?.capacity_gb;
     if (!effectiveMinRam && targetWorkload === 'coding' && /\b(good for coding|cheapest good|cheap but good)\b/i.test(lower)) {
       effectiveMinRam = 16;
     }
+
+    const effectiveBudgetCeiling = budget
+      ? budget.amount
+      : (isCheap ? (targetWorkload === 'coding' ? 60000 : 50000) : undefined);
 
     const intentPayload = {
       raw_query: rawQuery,
@@ -63,9 +69,14 @@ export class DeterministicNLUProvider implements ILLMProvider {
         total_ceiling: budget.amount,
         is_hard_ceiling: budget.isHardCeiling,
         raw_expression: budget.rawExpression
-      } : undefined,
+      } : (isCheap ? {
+        currency: 'INR',
+        total_ceiling: targetWorkload === 'coding' ? 60000 : 50000,
+        is_hard_ceiling: false,
+        raw_expression: 'cheap'
+      } : undefined),
       hard_constraints: {
-        max_total_budget: budget?.isHardCeiling ? budget.amount : undefined,
+        max_total_budget: effectiveBudgetCeiling,
         min_ram_gb: effectiveMinRam,
         min_storage_gb: storage?.capacity_gb,
         in_stock_only: true,

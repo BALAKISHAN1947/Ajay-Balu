@@ -2209,4 +2209,97 @@ body {
   }
 }
 
+/* Over-Budget Inline Actions & Controls */
+.overbudget-action-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.overbudget-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  color: #ef4444;
+  font-size: 0.9rem;
+}
+.overbudget-arithmetic {
+  display: flex;
+  justify-content: space-between;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.82rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.overbudget-arithmetic-item span {
+  color: var(--text-muted);
+  margin-right: 0.35rem;
+}
+.overbudget-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.overbudget-remove-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+}
+.btn-remove-sm {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-remove-sm:hover {
+  background: rgba(239, 68, 68, 0.35);
+}
+.inline-budget-adjust {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  flex-wrap: wrap;
+}
+.inline-budget-input {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border-medium);
+  color: #fff;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  width: 150px;
+}
+.btn-increase-budget {
+  background: var(--accent-emerald);
+  color: #000;
+  font-weight: 700;
+  border: none;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-increase-budget:hover {
+  background: #34d399;
+}
+
 

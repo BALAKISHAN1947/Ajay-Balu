@@ -139,6 +139,39 @@ export function createServer(options: ServerOptions = {}) {
       return;
     }
 
+    // API Route: POST /api/v1/session/:id/budget
+    const budgetMatch = pathname.match(/^\/api\/v1\/session\/([a-zA-Z0-9_-]+)\/budget$/);
+    if (req.method === 'POST' && budgetMatch) {
+      const sessionId = budgetMatch[1];
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const amount = Number(payload.budget ?? payload.amount);
+          if (isNaN(amount) || amount <= 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Valid positive budget number is required.' }));
+            return;
+          }
+
+          const result = sessionManager.updateBudget(sessionId, amount);
+          if (!result.success) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: result.error }));
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result.session));
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
     // API Route: GET /api/v1/session/:id/compare?alternative_sku=...
     const compareMatch = pathname.match(/^\/api\/v1\/session\/([a-zA-Z0-9_-]+)\/compare$/);
     if (req.method === 'GET' && compareMatch) {

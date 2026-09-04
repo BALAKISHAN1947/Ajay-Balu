@@ -412,6 +412,92 @@ export class SessionManager {
       over_budget_by_inr: overBudgetByInr
     };
   }
+
+  /**
+   * Directly updates the customer's budget ceiling in session state.
+   * Recalculates basket totals, budget margins, and proactive cross-sell eligibility.
+   * Does NOT require an additional customer chat message.
+   */
+  public updateBudget(
+    sessionId: string,
+    newBudgetInr: number
+  ): { success: boolean; session?: Session; error?: string } {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return { success: false, error: `Session "${sessionId}" not found.` };
+    }
+
+    if (typeof newBudgetInr !== 'number' || isNaN(newBudgetInr) || newBudgetInr <= 0) {
+      return { success: false, error: 'Budget must be a positive number.' };
+    }
+
+    const previousBudget = session.latest_recommendation?.budget_ceiling_inr ?? session.current_intent?.hard_constraints.max_total_budget;
+
+    // 1. Update session's current intent
+    if (session.current_intent) {
+      session.current_intent.hard_constraints.max_total_budget = newBudgetInr;
+      if (session.current_intent.budget) {
+        session.current_intent.budget.total_ceiling = newBudgetInr;
+        session.current_intent.budget.is_hard_ceiling = true;
+        session.current_intent.budget.raw_expression = `₹${newBudgetInr.toLocaleString('en-IN')}`;
+      } else {
+        session.current_intent.budget = {
+          currency: 'INR',
+          total_ceiling: newBudgetInr,
+          is_hard_ceiling: true,
+          raw_expression: `₹${newBudgetInr.toLocaleString('en-IN')}`
+        };
+      }
+    }
+
+    // 2. If session has a latest recommendation, recalculate basket totals and proactive add-ons
+    if (session.latest_recommendation) {
+      const rec = session.latest_recommendation;
+      rec.budget_ceiling_inr = newBudgetInr;
+      rec.budget_margin_inr = newBudgetInr - rec.total_price_inr;
+
+      const isNowValid = rec.total_price_inr <= newBudgetInr;
+      rec.match_type = isNowValid ? 'VALID_MATCH' : 'PARTIAL_MATCH';
+      rec.status = isNowValid ? 'SUCCESS' : 'PARTIAL_MATCH';
+
+      if (rec.recommended_laptop) {
+        const laptop = rec.recommended_laptop.product;
+        const allMice = this.repo.getMice();
+        const allBags = this.repo.getBags();
+        if (session.current_intent) {
+          const rawAddOns = evaluateProactiveCrossSells(laptop, session.current_intent, allMice, allBags);
+          rec.proactive_add_ons = rawAddOns.map((addon) => {
+            const isSelected = session.selected_accessory_skus.includes(addon.sku);
+            if (isSelected) return addon;
+            const newTotal = rec.total_price_inr + addon.price_inr;
+            const isWithin = newTotal <= newBudgetInr;
+            const delta = newTotal > newBudgetInr ? newTotal - newBudgetInr : undefined;
+            return {
+              ...addon,
+              current_total_inr: rec.total_price_inr,
+              new_total_inr: newTotal,
+              is_within_budget: isWithin,
+              budget_delta_inr: delta,
+              state: isWithin ? 'ELIGIBLE_CROSS_SELL' : 'COMPATIBLE_BUT_OVER_BUDGET'
+            };
+          });
+        }
+      }
+    }
+
+    // Invalidate previous approval as budget constraints changed
+    delete session.active_approval_id;
+    delete session.active_basket_hash;
+    delete session.current_order_id;
+
+    this.addAuditEvent(sessionId, 'BUDGET_UPDATED', {
+      previous_budget_inr: previousBudget,
+      new_budget_inr: newBudgetInr
+    });
+
+    session.updated_at = new Date().toISOString();
+    return { success: true, session };
+  }
 }
 
 // Singleton instance
