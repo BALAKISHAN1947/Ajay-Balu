@@ -51,7 +51,7 @@ export type RecommendationStatus =
   | 'NO_MATCH';
 
 export interface ClosestOption {
-  type: 'CHEAPEST_SATISFYING_SPEC' | 'CLOSEST_TO_BUDGET' | 'BALANCED_COMPROMISE';
+  type: 'CHEAPEST_SATISFYING_SPEC' | 'CLOSEST_TO_BUDGET' | 'BALANCED_COMPROMISE' | 'SAME_BRAND_ALTERNATIVE';
   label: string;
   sku: string;
   name: string;
@@ -123,5 +123,6 @@ export interface RecommendationResult {
   unfulfilled_constraints?: string[];
   constraint_analysis?: ConstraintAnalysis;
   proactive_add_ons?: ProactiveAddOn[];
+  candidate_brands_considered?: string[];
 }
 

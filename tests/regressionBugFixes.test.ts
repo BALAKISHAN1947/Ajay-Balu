@@ -159,7 +159,7 @@ describe('Regression: Production Bug Fixes (6 Queries)', () => {
       'state: ' + data.state
     );
     const rec = data.recommendation;
-    const bags: any[] = (rec.accessories || []).filter((a: any) => a.sku && String(a.sku).startsWith('NX-BG'));
+    const bags: any[] = (rec.accessories || []).filter((a: any) => a.sku && (String(a.sku).includes('-BG-') || a.category === 'bag'));
     assert.ok(bags.length > 0, 'At least one bag must be in accessories');
     for (const bag of bags) {
       assert.ok(
@@ -170,7 +170,7 @@ describe('Regression: Production Bug Fixes (6 Queries)', () => {
     const checks: any[] = rec.compatibility_checks || [];
     // CompatibilityResult uses accessory_sku and reason (not item_sku / rule_applied)
     const hasBagCheck = checks.some((c: any) =>
-      (c.accessory_sku && String(c.accessory_sku).startsWith('NX-BG')) ||
+      (c.accessory_sku && String(c.accessory_sku).includes('-BG-')) ||
       (c.accessory_category === 'bag')
     );
     assert.ok(

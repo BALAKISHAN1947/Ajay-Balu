@@ -183,8 +183,8 @@ describe('Customer Commerce Integration Pass (Scenarios A through Z)', () => {
     assert.ok(rec.budget_margin_inr >= 0);
   });
 
-  // M. Cross-sell over budget
-  it('M. Cross-sell over budget: Blocks checkout when accessory pushes basket over budget', async () => {
+  // M. Cross-sell over budget does not block checkout for explicitly selected order
+  it('M. Cross-sell over budget: Allows checkout when customer explicitly selects accessory above budget', async () => {
     const session = sessionManager.getOrCreateSession('ses_test_m');
     await orchestrator.processMessage('I need a coding laptop under 60000', 'ses_test_m');
 
@@ -192,12 +192,12 @@ describe('Customer Commerce Integration Pass (Scenarios A through Z)', () => {
     sessionManager.toggleAccessory('ses_test_m', 'NX-MS-SILENT-03', true);
     const review = sessionManager.generatePurchaseReview('ses_test_m');
     assert.equal(review.is_over_budget, true);
-    assert.equal(review.gate_status, 'BLOCKED_OVER_BUDGET');
+    assert.equal(review.gate_status, 'AUTHORIZED_PENDING_GATEWAY');
 
-    // Trying to approve fails
-    assert.throws(() => {
-      orderManager.approvePurchase(sessionManager, 'ses_test_m');
-    }, /exceeds customer budget/);
+    // Explicit selection succeeds approval
+    const approval = orderManager.approvePurchase(sessionManager, 'ses_test_m');
+    assert.ok(approval.approval_id);
+    assert.equal(approval.session_id, 'ses_test_m');
   });
 
   // N. Inline budget increase

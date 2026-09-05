@@ -24,16 +24,29 @@ export interface ICatalogRepository {
 
 export class InMemoryCatalogRepository implements ICatalogRepository {
   private products: Map<string, Product>;
+  private allProductsList: Product[];
+  private laptopsList: LaptopProduct[];
+  private miceList: MouseProduct[];
+  private bagsList: BagProduct[];
 
   constructor(initialProducts: Product[] = ALL_PRODUCTS) {
     this.products = new Map();
+    this.allProductsList = [];
+    this.laptopsList = [];
+    this.miceList = [];
+    this.bagsList = [];
+
     for (const p of initialProducts) {
       this.products.set(p.sku, p);
+      this.allProductsList.push(p);
+      if (p.category === 'laptop') this.laptopsList.push(p as LaptopProduct);
+      else if (p.category === 'mouse') this.miceList.push(p as MouseProduct);
+      else if (p.category === 'bag') this.bagsList.push(p as BagProduct);
     }
   }
 
   getAllProducts(): Product[] {
-    return Array.from(this.products.values());
+    return this.allProductsList;
   }
 
   getProductBySku(sku: string): Product | null {
@@ -41,7 +54,7 @@ export class InMemoryCatalogRepository implements ICatalogRepository {
   }
 
   searchProducts(filters: ProductFilters): Product[] {
-    return Array.from(this.products.values()).filter((p) => {
+    return this.allProductsList.filter((p) => {
       if (filters.category && p.category !== filters.category) return false;
       if (filters.active_only !== false && !p.is_active) return false;
       if (filters.in_stock_only && p.stock_quantity <= 0) return false;
@@ -51,21 +64,15 @@ export class InMemoryCatalogRepository implements ICatalogRepository {
   }
 
   getLaptops(): LaptopProduct[] {
-    return Array.from(this.products.values()).filter(
-      (p): p is LaptopProduct => p.category === 'laptop'
-    );
+    return this.laptopsList;
   }
 
   getMice(): MouseProduct[] {
-    return Array.from(this.products.values()).filter(
-      (p): p is MouseProduct => p.category === 'mouse'
-    );
+    return this.miceList;
   }
 
   getBags(): BagProduct[] {
-    return Array.from(this.products.values()).filter(
-      (p): p is BagProduct => p.category === 'bag'
-    );
+    return this.bagsList;
   }
 
   getLaptopSpecs(sku: string): LaptopProduct | null {

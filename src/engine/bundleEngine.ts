@@ -23,10 +23,12 @@ export function buildDeterministicBundle(
   mice: MouseProduct[],
   bags: BagProduct[]
 ): BundleResult {
-  const budgetCeiling = intent.hard_constraints.max_total_budget ?? 70000;
+  const rawCeiling = intent.hard_constraints.max_total_budget;
+  const budgetCeiling = rawCeiling !== undefined ? rawCeiling : Infinity;
   const compatibilityEvidence: CompatibilityResult[] = [];
   const accessoryRejections: RejectionLog[] = [];
   const selectedAccessories: BundleItem[] = [];
+  const targetBrand = (intent.requested_brand || laptop.brand || '').toLowerCase().trim();
 
   const requiresMouse = intent.required_categories.includes('mouse');
   const requiresBag = intent.required_categories.includes('bag');
@@ -38,8 +40,13 @@ export function buildDeterministicBundle(
   if (requiresMouse) {
     const candidateMice = mice.filter((m) => m.is_active && m.stock_quantity > 0);
 
-    // Score/sort mice: prefer Bluetooth, then multi-device productivity pairing, then price
+    // Score/sort mice: prefer same-brand, then Bluetooth, then multi-device productivity pairing, then price
     const sortedMice = [...candidateMice].sort((a, b) => {
+      const aBrand = targetBrand && a.brand.toLowerCase().trim() === targetBrand;
+      const bBrand = targetBrand && b.brand.toLowerCase().trim() === targetBrand;
+      if (aBrand && !bBrand) return -1;
+      if (!aBrand && bBrand) return 1;
+
       // Prioritize Bluetooth
       if (a.bluetooth && !b.bluetooth) return -1;
       if (!a.bluetooth && b.bluetooth) return 1;
@@ -69,7 +76,7 @@ export function buildDeterministicBundle(
       }
 
       // Check if mouse alone exceeds remaining budget
-      if (runningTotal + mouse.price_inr > budgetCeiling) {
+      if (isFinite(budgetCeiling) && runningTotal + mouse.price_inr > budgetCeiling) {
         accessoryRejections.push({
           sku: mouse.sku,
           name: mouse.name,
@@ -93,8 +100,8 @@ export function buildDeterministicBundle(
         selected_accessories: [],
         itemized_line_items: [],
         total_price_inr: runningTotal,
-        budget_ceiling_inr: budgetCeiling,
-        budget_margin_inr: budgetCeiling - runningTotal,
+        budget_ceiling_inr: rawCeiling ?? 0,
+        budget_margin_inr: isFinite(budgetCeiling) ? budgetCeiling - runningTotal : 0,
         compatibility_evidence: compatibilityEvidence,
         accessory_rejections: accessoryRejections,
         failure_reason: `No compatible in-stock mouse found within budget limit (₹${budgetCeiling}).`
@@ -116,9 +123,14 @@ export function buildDeterministicBundle(
   if (requiresBag) {
     const candidateBags = bags.filter((b) => b.is_active && b.stock_quantity > 0);
 
-    // Sort bags: prefer style matching user preference (e.g. backpack), then price
+    // Sort bags: prefer same-brand, then style matching user preference (e.g. backpack), then price
     const preferredStyle = intent.soft_preferences.preferred_bag_type ?? 'backpack';
     const sortedBags = [...candidateBags].sort((a, b) => {
+      const aBrand = targetBrand && a.brand.toLowerCase().trim() === targetBrand;
+      const bBrand = targetBrand && b.brand.toLowerCase().trim() === targetBrand;
+      if (aBrand && !bBrand) return -1;
+      if (!aBrand && bBrand) return 1;
+
       const aPref = a.bag_type === preferredStyle ? 1 : 0;
       const bPref = b.bag_type === preferredStyle ? 1 : 0;
       if (aPref !== bPref) return bPref - aPref;
@@ -143,7 +155,7 @@ export function buildDeterministicBundle(
       }
 
       // Check if bag exceeds remaining budget
-      if (runningTotal + bag.price_inr > budgetCeiling) {
+      if (isFinite(budgetCeiling) && runningTotal + bag.price_inr > budgetCeiling) {
         accessoryRejections.push({
           sku: bag.sku,
           name: bag.name,
@@ -167,11 +179,11 @@ export function buildDeterministicBundle(
         selected_accessories: [],
         itemized_line_items: [],
         total_price_inr: runningTotal,
-        budget_ceiling_inr: budgetCeiling,
-        budget_margin_inr: budgetCeiling - runningTotal,
+        budget_ceiling_inr: rawCeiling ?? 0,
+        budget_margin_inr: isFinite(budgetCeiling) ? budgetCeiling - runningTotal : 0,
         compatibility_evidence: compatibilityEvidence,
         accessory_rejections: accessoryRejections,
-        failure_reason: `No compatible in-stock bag found that physically fits ${laptop.name} within remaining budget.`
+        failure_reason: `No compatible in-stock bag found within budget limit (₹${budgetCeiling}).`
       };
     }
 
@@ -185,8 +197,8 @@ export function buildDeterministicBundle(
     });
   }
 
-  // 3. Final calculations
-  const itemized = [
+  const budgetMargin = isFinite(budgetCeiling) ? budgetCeiling - runningTotal : 0;
+  const itemizedLineItems = [
     { sku: laptop.sku, name: laptop.name, price_inr: laptop.price_inr },
     ...selectedAccessories.map((a) => ({ sku: a.sku, name: a.name, price_inr: a.price_inr }))
   ];
@@ -195,17 +207,19 @@ export function buildDeterministicBundle(
     success: true,
     selected_laptop: laptop,
     selected_accessories: selectedAccessories,
-    itemized_line_items: itemized,
+    itemized_line_items: itemizedLineItems,
     total_price_inr: runningTotal,
-    budget_ceiling_inr: budgetCeiling,
-    budget_margin_inr: budgetCeiling - runningTotal,
+    budget_ceiling_inr: rawCeiling ?? runningTotal,
+    budget_margin_inr: budgetMargin,
     compatibility_evidence: compatibilityEvidence,
     accessory_rejections: accessoryRejections
   };
 }
 
 /**
- * PRODUCT TRUST PRINCIPLE (Track 01):
+ * Evaluates proactive cross-sell recommendations (Milestone 3).
+ *
+ * GOVERNING PRINCIPLE (TRACK 01):
  * "Revenue optimization must never override customer intent, hard constraints, compatibility, factual grounding or explicit approval."
  *
  * The agent should increase basket value only through genuinely relevant, compatible, and properly disclosed products.
@@ -220,11 +234,17 @@ export function evaluateProactiveCrossSells(
 ): ProactiveAddOn[] {
   const addOns: ProactiveAddOn[] = [];
   const maxBudget = intent.hard_constraints.max_total_budget;
+  const targetBrand = (intent.requested_brand || laptop.brand || '').toLowerCase().trim();
 
   // 1. Evaluate mouse if not already explicitly required
   if (!intent.required_categories.includes('mouse')) {
     const candidateMice = mice.filter((m) => m.is_active && m.stock_quantity > 0);
     const sortedMice = [...candidateMice].sort((a, b) => {
+      const aBrand = targetBrand && a.brand.toLowerCase().trim() === targetBrand;
+      const bBrand = targetBrand && b.brand.toLowerCase().trim() === targetBrand;
+      if (aBrand && !bBrand) return -1;
+      if (!aBrand && bBrand) return 1;
+
       if (a.bluetooth && !b.bluetooth) return -1;
       if (!a.bluetooth && b.bluetooth) return 1;
       return a.price_inr - b.price_inr;
@@ -240,22 +260,29 @@ export function evaluateProactiveCrossSells(
     }
 
     if (compatibleMice.length > 0) {
-      // Prioritize in-budget candidate if one exists
+      // Prioritize same-brand in-budget candidate first, then general in-budget, then closest
+      const sameBrandInBudget = maxBudget
+        ? compatibleMice.find((c) => c.mouse.brand.toLowerCase().trim() === targetBrand && laptop.price_inr + c.mouse.price_inr <= maxBudget)
+        : compatibleMice.find((c) => c.mouse.brand.toLowerCase().trim() === targetBrand);
+
       const inBudgetMouse = maxBudget
         ? compatibleMice.find((c) => laptop.price_inr + c.mouse.price_inr <= maxBudget)
         : compatibleMice[0];
 
-      const selected = inBudgetMouse || compatibleMice[0];
+      const selected = sameBrandInBudget || inBudgetMouse || compatibleMice[0];
       const mouse = selected.mouse;
       const newTotal = laptop.price_inr + mouse.price_inr;
       const isWithinBudget = maxBudget ? newTotal <= maxBudget : true;
       const budgetDelta = maxBudget && newTotal > maxBudget ? newTotal - maxBudget : undefined;
       const state = isWithinBudget ? 'ELIGIBLE_CROSS_SELL' : 'COMPATIBLE_BUT_OVER_BUDGET';
 
-      let relevanceReason = 'Ergonomic wireless navigation for daily productivity.';
-      if (laptop.ports.usb_a_count <= 1 && mouse.bluetooth) {
+      const isSameBrand = mouse.brand.toLowerCase().trim() === targetBrand;
+      let relevanceReason = isSameBrand
+        ? `Official ${mouse.brand} accessory designed for seamless pairing with ${laptop.name}.`
+        : 'Verified compatible accessory for productivity and navigation.';
+      if (!isSameBrand && laptop.ports.usb_a_count <= 1 && mouse.bluetooth) {
         relevanceReason = `Bluetooth compatible; avoids consuming the laptop's ${laptop.ports.usb_a_count === 0 ? 'zero' : 'only'} USB-A port.`;
-      } else if (intent.target_workload === 'gaming') {
+      } else if (!isSameBrand && intent.target_workload === 'gaming') {
         relevanceReason = 'High-precision low-latency tracking for responsive gaming and multitasking.';
       }
 
@@ -279,7 +306,14 @@ export function evaluateProactiveCrossSells(
   // 2. Evaluate bag if not already explicitly required
   if (!intent.required_categories.includes('bag')) {
     const candidateBags = bags.filter((b) => b.is_active && b.stock_quantity > 0);
-    const sortedBags = [...candidateBags].sort((a, b) => a.price_inr - b.price_inr);
+    const sortedBags = [...candidateBags].sort((a, b) => {
+      const aBrand = targetBrand && a.brand.toLowerCase().trim() === targetBrand;
+      const bBrand = targetBrand && b.brand.toLowerCase().trim() === targetBrand;
+      if (aBrand && !bBrand) return -1;
+      if (!aBrand && bBrand) return 1;
+
+      return a.price_inr - b.price_inr;
+    });
 
     const compatibleBags: Array<{ bag: BagProduct; reason: string }> = [];
     for (const bag of sortedBags) {
@@ -290,19 +324,25 @@ export function evaluateProactiveCrossSells(
     }
 
     if (compatibleBags.length > 0) {
-      // Prioritize in-budget candidate if one exists
+      const sameBrandInBudget = maxBudget
+        ? compatibleBags.find((c) => c.bag.brand.toLowerCase().trim() === targetBrand && laptop.price_inr + c.bag.price_inr <= maxBudget)
+        : compatibleBags.find((c) => c.bag.brand.toLowerCase().trim() === targetBrand);
+
       const inBudgetBag = maxBudget
         ? compatibleBags.find((c) => laptop.price_inr + c.bag.price_inr <= maxBudget)
         : compatibleBags[0];
 
-      const selected = inBudgetBag || compatibleBags[0];
+      const selected = sameBrandInBudget || inBudgetBag || compatibleBags[0];
       const bag = selected.bag;
       const newTotal = laptop.price_inr + bag.price_inr;
       const isWithinBudget = maxBudget ? newTotal <= maxBudget : true;
       const budgetDelta = maxBudget && newTotal > maxBudget ? newTotal - maxBudget : undefined;
       const state = isWithinBudget ? 'ELIGIBLE_CROSS_SELL' : 'COMPATIBLE_BUT_OVER_BUDGET';
 
-      const relevanceReason = `Verified dimensional fit (${laptop.dimensions_mm.length}x${laptop.dimensions_mm.width}mm) for laptop compartment protection.`;
+      const isSameBrand = bag.brand.toLowerCase().trim() === targetBrand;
+      const relevanceReason = isSameBrand
+        ? `Official ${bag.brand} sleeve custom-tailored for ${laptop.name}.`
+        : `Verified dimensional fit (${laptop.dimensions_mm.length}x${laptop.dimensions_mm.width}mm) for laptop compartment protection.`;
 
       addOns.push({
         sku: bag.sku,

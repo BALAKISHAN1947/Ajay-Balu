@@ -3,6 +3,7 @@ import { type ICatalogRepository, getCatalogRepository } from '../repository/cat
 import { RazorpayService, getRazorpayService } from '../services/razorpayService.ts';
 import { inrToPaise } from '../utils/currency.ts';
 import { computeBasketHash } from '../utils/hash.ts';
+import { checkCompatibility } from './compatibility.ts';
 import type { InternalOrder, ApprovalRecord, CreateOrderResult } from '../types/order.ts';
 
 export class OrderManager {
@@ -102,23 +103,48 @@ export class OrderManager {
   public approvePurchase(sessionManager: SessionManager, sessionId: string): ApprovalRecord {
     const basket = this.getAuthoritativeBasket(sessionManager, sessionId);
 
-    // Revalidate stock before granting approval
+    // Revalidate primary product
+    if (!basket.primary.is_active) {
+      throw new Error(`Selected laptop ${basket.primary.name} is inactive.`);
+    }
     if (basket.primary.stock_quantity <= 0) {
       throw new Error(`Selected laptop ${basket.primary.name} is currently out of stock.`);
     }
 
     for (const item of basket.lineItems) {
       const prod = this.repo.getProductBySku(item.sku);
-      if (!prod || prod.stock_quantity <= 0) {
+      if (!prod) {
+        throw new Error(`Item ${item.name} (${item.sku}) no longer found in catalog.`);
+      }
+      if (!prod.is_active) {
+        throw new Error(`Item ${item.name} (${item.sku}) is inactive.`);
+      }
+      if (prod.stock_quantity <= 0) {
         throw new Error(`Item ${item.name} (${item.sku}) is currently out of stock.`);
+      }
+      if (item.category !== 'laptop') {
+        const compat = checkCompatibility(basket.primary.sku, item.sku, this.repo, basket.session.current_intent || undefined);
+        if (!compat.compatible) {
+          throw new Error(`Accessory ${item.name} (${item.sku}) is incompatible with ${basket.primary.name}: ${compat.reason}`);
+        }
       }
     }
 
-    // Budget guard
-    if (basket.totalInr > basket.rec.budget_ceiling_inr) {
-      throw new Error(
-        `Authoritative total (₹${basket.totalInr}) exceeds customer budget ceiling (₹${basket.rec.budget_ceiling_inr}).`
-      );
+    if (!basket.totalInr || basket.totalInr <= 0 || !isFinite(basket.totalInr)) {
+      throw new Error(`Authoritative total (₹${basket.totalInr}) is invalid.`);
+    }
+
+    // Budget check: Initial customer budget is a preference / spending target.
+    // Once customer explicitly selects products/accessories, it is THEIR ORDER.
+    // We log an informational audit event if over original budget, but do NOT block checkout.
+    const budgetCeiling = basket.rec.budget_ceiling_inr;
+    const hasBudgetLimit = budgetCeiling !== undefined && budgetCeiling > 0 && isFinite(budgetCeiling);
+    if (hasBudgetLimit && basket.totalInr > budgetCeiling) {
+      sessionManager.addAuditEvent(sessionId, 'ORDER_ABOVE_ORIGINAL_BUDGET_APPROVED', {
+        original_budget: budgetCeiling,
+        authoritative_total: basket.totalInr,
+        delta: basket.totalInr - budgetCeiling
+      });
     }
 
     const approvalId = `appr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -252,14 +278,15 @@ export class OrderManager {
     // Regardless of clientProvidedAmount, we strictly use authoritative basket total
     const authoritativeTotalInr = basket.totalInr;
 
-    // 9. Confirm total does not exceed user's hard budget
-    if (authoritativeTotalInr > basket.rec.budget_ceiling_inr) {
-      sessionManager.addAuditEvent(sessionId, 'CHECKOUT_VALIDATION_FAILED', {
-        reason: 'BUDGET_EXCEEDED',
+    // 9. Informational record for customer's original budget
+    const orderBudgetCeiling = basket.rec.budget_ceiling_inr;
+    const orderHasBudgetLimit = orderBudgetCeiling !== undefined && orderBudgetCeiling > 0 && isFinite(orderBudgetCeiling);
+    if (orderHasBudgetLimit && authoritativeTotalInr > orderBudgetCeiling) {
+      sessionManager.addAuditEvent(sessionId, 'ORDER_ABOVE_ORIGINAL_BUDGET_PAYMENT_INITIATED', {
+        original_budget: orderBudgetCeiling,
         authoritative_total: authoritativeTotalInr,
-        budget: basket.rec.budget_ceiling_inr
+        delta: authoritativeTotalInr - orderBudgetCeiling
       });
-      throw new Error('Authoritative total exceeds customer budget ceiling.');
     }
 
     // 10. Convert INR to paise

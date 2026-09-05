@@ -74,7 +74,8 @@ export function createServer(options: ServerOptions = {}) {
           }
 
           const sessionId = payload.session_id || `ses_${Date.now()}`;
-          const response = await orchestrator.processMessage(payload.message, sessionId);
+          const clientT1 = typeof payload.t1_frontend_start === 'number' ? payload.t1_frontend_start : undefined;
+          const response = await orchestrator.processMessage(payload.message, sessionId, clientT1);
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(response));
@@ -114,7 +115,7 @@ export function createServer(options: ServerOptions = {}) {
         try {
           const payload = JSON.parse(body || '{}');
           const sku = payload.sku;
-          const included = payload.included !== false;
+          const included = typeof payload.included === 'boolean' ? payload.included : undefined;
 
           if (!sku || typeof sku !== 'string') {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -465,10 +466,10 @@ export function createServer(options: ServerOptions = {}) {
           const payload = JSON.parse(body || '{}');
           const version = payload.catalog_version || 'Catalog-v1.0-Baseline';
           if (version.includes('Enriched') || version === 'version_b' || version === 'enriched') {
-            const comparison = await experimentEngine.runEnrichedExperiment();
-            const summary = experimentEngine.getEnrichedSummary();
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'COMPLETED', summary, comparison }));
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              error: 'Multi-fix benchmark runs are disabled. Run an isolated 1-fix experiment using POST /api/v1/merchant/experiment/isolated with a specific fix_id.'
+            }));
             return;
           } else {
             const summary = await experimentEngine.runBaseline(version);
@@ -561,24 +562,12 @@ export function createServer(options: ServerOptions = {}) {
       return;
     }
 
-    // API Route: GET /api/v1/merchant/experiment/compare
+    // API Route: GET /api/v1/merchant/experiment/compare (Disallowed: only isolated 1-fix experiments permitted)
     if (req.method === 'GET' && pathname === '/api/v1/merchant/experiment/compare') {
-      try {
-        const comparison = await experimentEngine.runEnrichedExperiment();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(comparison));
-      } catch (err: any) {
-        if (err.message && err.message.includes('PRECONDITION_FAILED')) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            status: 'PRECONDITION_FAILED',
-            error: err.message.replace('PRECONDITION_FAILED: ', '')
-          }));
-          return;
-        }
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
-      }
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'Multi-fix experiments are disabled. Run an isolated 1-fix experiment using POST /api/v1/merchant/experiment/isolated with a specific fix_id.'
+      }));
       return;
     }
 
@@ -624,15 +613,17 @@ export function createServer(options: ServerOptions = {}) {
      * API Route: POST /api/v1/merchant/experiment/reset
      * Clears the enriched experiment state so a fresh isolated experiment can be
      * started from the existing baseline without re-running the 100-intent baseline.
+     * Resets all approved fixes back to PENDING.
      * Does NOT modify Catalog Version A or the baseline benchmark summary.
      */
     if (req.method === 'POST' && pathname === '/api/v1/merchant/experiment/reset') {
       try {
         experimentEngine.resetExperiment();
+        catalogFixEngine.resetApprovedFixes();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'RESET',
-          message: 'Experiment state reset. Catalog Version A (baseline) is preserved. You may now run a fresh isolated experiment with a single approved fix.'
+          message: 'Experiment state reset. Catalog Version A (baseline) is preserved. All approved fixes reset to pending. You may now run a fresh isolated experiment with a single approved fix.'
         }));
       } catch (err: any) {
         res.writeHead(500, { 'Content-Type': 'application/json' });

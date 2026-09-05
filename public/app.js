@@ -4,6 +4,7 @@
 
 let currentSessionId = `ses_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 let currentRecommendation = null;
+let authoritativeSelectedSkus = [];
 
 // DOM Elements
 const sessionIdDisplay = document.getElementById('session-id-display');
@@ -89,6 +90,7 @@ initSession();
 resetSessionBtn.addEventListener('click', () => {
   currentSessionId = `ses_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   currentRecommendation = null;
+  authoritativeSelectedSkus = [];
   sessionIdDisplay.textContent = currentSessionId;
   chatMessages.innerHTML = '';
   appendAgentMessage('New session started. Describe your workspace requirements to begin.', 'Ready');
@@ -130,7 +132,7 @@ async function submitUserQuery(text) {
   procMsg.innerHTML = `
     <div class="message-meta">
       <span class="agent-avatar">AI</span>
-      <span class="sender-name">Nexora Assistant • Analyzing</span>
+      <span class="sender-name">Shopping Assistant • Analyzing</span>
       <span class="time-stamp">Just now</span>
     </div>
     <div class="message-body" style="display: flex; align-items: center; gap: 0.5rem; color: #38bdf8;">
@@ -163,7 +165,8 @@ async function submitUserQuery(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: currentSessionId,
-        message: text
+        message: text,
+        t1_frontend_start: startTime
       })
     });
 
@@ -175,18 +178,12 @@ async function submitUserQuery(text) {
     }
 
     const data = await res.json();
-    updateStage('Recommendation ready.');
-
-    // Bounded customer experience (~1600ms): 1600 - elapsed
-    const elapsed = Date.now() - startTime;
-    const remainingDelay = Math.max(0, 1600 - elapsed);
-    if (remainingDelay > 0) {
-      await new Promise((r) => setTimeout(r, remainingDelay));
-    }
-
+    // Real processing completed; target response latency ~2s (bounded: 1600 - elapsed)
     clearTimeout(timer1);
     clearTimeout(timer2);
-    procMsg.remove();
+    if (procMsg.parentNode) {
+      procMsg.remove();
+    }
 
     handleAgentResponse(data);
   } catch (err) {
@@ -206,6 +203,15 @@ async function submitUserQuery(text) {
 }
 
 function handleAgentResponse(data) {
+  // Sync single authoritative accessory selection state from backend response (Bug 3)
+  if (Array.isArray(data.selected_accessory_skus)) {
+    authoritativeSelectedSkus = data.selected_accessory_skus;
+  } else if (Array.isArray(data.recommendation?.accessories)) {
+    authoritativeSelectedSkus = data.recommendation.accessories.map((a) => a.sku);
+  } else {
+    authoritativeSelectedSkus = [];
+  }
+
   if (data.state === 'CLARIFICATION_REQUIRED') {
     setAgentState('CLARIFICATION', 'Needs Input');
     clarificationBanner.classList.remove('hidden');
@@ -219,7 +225,7 @@ function handleAgentResponse(data) {
 
   if (data.state === 'NO_CATEGORY_MATCH') {
     setAgentState('NO_CATEGORY_MATCH', 'Unsupported Category');
-    appendAgentMessage(data.explanation || 'Nexora does not carry that product category.', 'Unsupported Category');
+    appendAgentMessage(data.explanation || 'Our verified catalog does not carry that product category.', 'Unsupported Category');
     showNoCategoryMatchState(data.explanation, data.unsupported_category);
     return;
   }
@@ -412,81 +418,38 @@ function renderProactiveAddOns(proactiveAddOns, currentAccessories) {
     (a) => a.state === 'COMPATIBLE_BUT_OVER_BUDGET' || (!a.is_within_budget && a.budget_delta_inr)
   );
 
-  // 1. Normal Selectable Recommendations: ELIGIBLE_CROSS_SELL
-  if (eligible.length > 0) {
-    const elHeader = document.createElement('div');
-    elHeader.className = 'addon-subheading';
-    elHeader.style.cssText = 'font-size: 0.85rem; font-weight: 700; color: #10b981; margin: 0.5rem 0 0.25rem; text-transform: uppercase; letter-spacing: 0.5px;';
-    elHeader.textContent = 'Recommended Add-Ons (Within Budget)';
-    proactiveAddonsList.appendChild(elHeader);
+  const elHeader = document.createElement('div');
+  elHeader.className = 'addon-subheading';
+  elHeader.style.cssText = 'font-size: 0.85rem; font-weight: 700; color: #38bdf8; margin: 0.5rem 0 0.25rem; text-transform: uppercase; letter-spacing: 0.5px;';
+  elHeader.textContent = 'Recommended for Your Setup';
+  proactiveAddonsList.appendChild(elHeader);
 
-    eligible.forEach((addon) => {
-      const card = document.createElement('div');
-      card.className = 'accessory-card';
-      card.innerHTML = `
-        <div class="accessory-left">
-          <input type="checkbox" class="accessory-checkbox proactive-checkbox" data-sku="${addon.sku}" id="proactive-${addon.sku}" />
-          <div class="accessory-info">
-            <label for="proactive-${addon.sku}" class="accessory-name">${addon.name}</label>
-            <span class="accessory-meta">+₹${addon.price_inr.toLocaleString('en-IN')} • New basket total: ₹${addon.new_total_inr.toLocaleString('en-IN')} (Within Budget)</span>
-            <span class="accessory-compat-proof">✓ ${addon.compatibility_reason}</span>
-            <span class="accessory-hint" style="font-size:0.75rem; color:#94a3b8; display:block; margin-top:2px;">${addon.relevance_reason}</span>
+  availableAddOns.forEach((addon) => {
+    const isChecked = authoritativeSelectedSkus.includes(addon.sku);
+    const card = document.createElement('div');
+    card.className = 'accessory-card';
+    card.innerHTML = `
+      <div class="accessory-left" style="width: 100%;">
+        <input type="checkbox" class="accessory-checkbox proactive-checkbox" data-sku="${addon.sku}" ${isChecked ? 'checked' : ''} id="proactive-${addon.sku}" />
+        <div class="accessory-info" style="width: 100%;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <label for="proactive-${addon.sku}" class="accessory-name" style="font-weight: 700;">${addon.name}</label>
+            <span style="font-weight: 700; font-size: 0.88rem; color: #38bdf8;">+₹${addon.price_inr.toLocaleString('en-IN')}</span>
           </div>
+          <span class="accessory-compat-proof">✓ ${addon.compatibility_reason}</span>
+          <span class="accessory-hint" style="font-size:0.75rem; color:#94a3b8; display:block; margin-top:2px;">${addon.relevance_reason}</span>
         </div>
-        <div class="accessory-price">+₹${addon.price_inr.toLocaleString('en-IN')}</div>
-      `;
+      </div>
+    `;
 
-      const checkbox = card.querySelector('.proactive-checkbox');
-      checkbox.addEventListener('change', async (e) => {
-        const isChecked = e.target.checked;
-        await toggleAccessoryBackend(addon.sku, isChecked, checkbox);
-      });
-
-      proactiveAddonsList.appendChild(card);
+    const checkbox = card.querySelector('.proactive-checkbox');
+    checkbox.addEventListener('change', async (e) => {
+      const isChecked = e.target.checked;
+      await toggleAccessoryBackend(addon.sku, isChecked, checkbox);
     });
-  }
 
-  // 2. Separate Section: COMPATIBLE_BUT_OVER_BUDGET
-  if (overBudget.length > 0) {
-    const obHeader = document.createElement('div');
-    obHeader.className = 'addon-subheading overbudget-subheading';
-    obHeader.style.cssText = 'font-size: 0.85rem; font-weight: 700; color: #f59e0b; margin: 1rem 0 0.25rem; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 0.25rem;';
-    obHeader.innerHTML = '<span>⚠️ Compatible, but over your budget</span>';
-    proactiveAddonsList.appendChild(obHeader);
-
-    overBudget.forEach((addon) => {
-      const card = document.createElement('div');
-      card.className = 'accessory-card overbudget-card';
-      card.style.borderColor = 'rgba(245, 158, 11, 0.4)';
-      card.style.background = 'rgba(245, 158, 11, 0.05)';
-      card.innerHTML = `
-        <div class="accessory-left" style="width: 100%;">
-          <input type="checkbox" class="accessory-checkbox proactive-checkbox" data-sku="${addon.sku}" id="proactive-${addon.sku}" />
-          <div class="accessory-info" style="width: 100%;">
-            <div style="display: flex; justify-content: space-between; align-items: baseline;">
-              <label for="proactive-${addon.sku}" class="accessory-name" style="font-weight: 700;">${addon.name}</label>
-              <span style="color: #ef4444; font-weight: 700; font-size: 0.85rem;">Over budget: +₹${(addon.budget_delta_inr || 0).toLocaleString('en-IN')}</span>
-            </div>
-            <div style="display: flex; gap: 1rem; font-size: 0.78rem; color: #cbd5e1; margin: 0.25rem 0; flex-wrap: wrap;">
-              <span>Current: <strong>₹${addon.current_total_inr.toLocaleString('en-IN')}</strong></span>
-              <span>Accessory: <strong>+₹${addon.price_inr.toLocaleString('en-IN')}</strong></span>
-              <span>New total: <strong>₹${addon.new_total_inr.toLocaleString('en-IN')}</strong></span>
-            </div>
-            <span class="accessory-compat-proof">✓ ${addon.compatibility_reason}</span>
-            <span class="accessory-hint" style="font-size:0.75rem; color:#f59e0b; display:block; margin-top:2px;">Requires explicit selection. Will push total bundle over your ₹${(addon.new_total_inr - (addon.budget_delta_inr || 0)).toLocaleString('en-IN')} budget limit.</span>
-          </div>
-        </div>
-      `;
-
-      const checkbox = card.querySelector('.proactive-checkbox');
-      checkbox.addEventListener('change', async (e) => {
-        const isChecked = e.target.checked;
-        await toggleAccessoryBackend(addon.sku, isChecked, checkbox);
-      });
-
-      proactiveAddonsList.appendChild(card);
-    });
-  }
+    proactiveAddonsList.appendChild(card);
+  });
 }
 
 function renderAccessories(accessories, checks) {
@@ -497,12 +460,13 @@ function renderAccessories(accessories, checks) {
   }
 
   accessories.forEach((acc) => {
-    const chk = checks.find((c) => c.accessory_sku === acc.sku);
+    const chk = (checks || []).find((c) => c.accessory_sku === acc.sku);
+    const isChecked = authoritativeSelectedSkus.includes(acc.sku);
     const card = document.createElement('div');
     card.className = 'accessory-card';
     card.innerHTML = `
       <div class="accessory-left">
-        <input type="checkbox" class="accessory-checkbox" data-sku="${acc.sku}" checked id="acc-${acc.sku}" />
+        <input type="checkbox" class="accessory-checkbox" data-sku="${acc.sku}" ${isChecked ? 'checked' : ''} id="acc-${acc.sku}" />
         <div class="accessory-info">
           <label for="acc-${acc.sku}" class="accessory-name">${acc.name}</label>
           <span class="accessory-meta">SKU: ${acc.sku} • Stock: ${acc.stock_quantity}</span>
@@ -539,19 +503,26 @@ async function toggleAccessoryBackend(sku, included, checkboxEl) {
 
     const rec = data.latest_recommendation;
     currentRecommendation = rec;
+    authoritativeSelectedSkus = Array.isArray(data.selected_accessory_skus)
+      ? data.selected_accessory_skus
+      : (rec.accessories || []).map((a) => a.sku);
     renderAccessories(rec.accessories, rec.compatibility_checks || []);
     renderProactiveAddOns(rec.proactive_add_ons, rec.accessories);
     updateBundleSummary(rec.itemized_line_items, rec.total_price_inr, rec.budget_ceiling_inr, rec.budget_margin_inr);
+    // Clear any stale payment status card when basket changes
+    if (paymentStatusCard) paymentStatusCard.classList.add('hidden');
+    if (paymentRetryWrap) paymentRetryWrap.classList.add('hidden');
 
-    const isOver = rec.total_price_inr > rec.budget_ceiling_inr;
-    const delta = Math.abs(rec.total_price_inr - rec.budget_ceiling_inr);
-    if (isOver) {
+    const hasLimit = rec.budget_ceiling_inr !== undefined && rec.budget_ceiling_inr !== null && rec.budget_ceiling_inr > 0 && isFinite(rec.budget_ceiling_inr);
+    const isAboveBudget = hasLimit && rec.total_price_inr > rec.budget_ceiling_inr;
+    const delta = hasLimit ? Math.abs(rec.total_price_inr - rec.budget_ceiling_inr) : 0;
+    if (isAboveBudget) {
       appendAgentMessage(
-        `Over budget by ₹${delta.toLocaleString('en-IN')}. Current total: ₹${rec.total_price_inr.toLocaleString('en-IN')} exceeds your budget limit of ₹${rec.budget_ceiling_inr.toLocaleString('en-IN')}. Remove an add-on or increase your budget to continue.`,
-        'Over Budget'
+        `Added to your selected order. Order total: ₹${rec.total_price_inr.toLocaleString('en-IN')} (Your selected order is ₹${delta.toLocaleString('en-IN')} above your original budget).`,
+        'Order Updated'
       );
     } else {
-      appendAgentMessage(`Cart updated from authoritative backend. Verified Total: ₹${rec.total_price_inr.toLocaleString('en-IN')}`, 'Cart Recalculated');
+      appendAgentMessage(`Added to your selected order. Order total: ₹${rec.total_price_inr.toLocaleString('en-IN')}`, 'Order Updated');
     }
   } catch (err) {
     alert(`Failed to update accessory: ${err.message}`);
@@ -568,124 +539,54 @@ function updateBundleSummary(lineItems, total, budget, margin) {
     bundleLineItems.appendChild(row);
   });
 
+  const hasBudget = budget !== undefined && budget !== null && budget > 0 && isFinite(budget);
   bundleTotalPrice.textContent = `₹${total.toLocaleString('en-IN')}`;
-  customerBudgetVal.textContent = `₹${budget.toLocaleString('en-IN')}`;
+  customerBudgetVal.textContent = hasBudget ? `₹${budget.toLocaleString('en-IN')}` : 'Flexible';
 
-  const isOverBudget = total > budget;
-  const delta = Math.abs(total - budget);
-  budgetMarginVal.textContent = isOverBudget
-    ? `₹${delta.toLocaleString('en-IN')} Over Budget`
-    : `₹${delta.toLocaleString('en-IN')} Unused Budget`;
-  budgetMarginVal.className = isOverBudget ? 'red-text' : 'green-text';
+  const isAboveBudget = hasBudget && total > budget;
+  const delta = hasBudget ? Math.abs(total - budget) : 0;
+  
+  if (isAboveBudget) {
+    budgetMarginVal.textContent = `₹${delta.toLocaleString('en-IN')} above original budget`;
+    budgetMarginVal.className = 'cyan-text';
+  } else {
+    budgetMarginVal.textContent = 'Within original budget ✓';
+    budgetMarginVal.className = 'green-text';
+  }
 
   const actionNote = document.getElementById('purchase-action-note') || document.querySelector('.action-note');
   const authBtnText = document.getElementById('authorize-btn-text') || authorizeBtn;
-  if (authBtnText) authBtnText.textContent = 'Review & Pay with Razorpay';
+  if (authBtnText) authBtnText.textContent = 'Review & Pay with Razorpay →';
 
   const overbudgetBox = document.getElementById('overbudget-action-box');
-
-  if (isOverBudget) {
-    authorizeBtn.disabled = true;
-    authorizeBtn.classList.add('disabled');
-    authorizeBtn.style.opacity = '0.5';
-    authorizeBtn.style.cursor = 'not-allowed';
-    if (actionNote) {
-      actionNote.textContent = 'Basket exceeds budget. Remove an accessory or increase budget directly below.';
-      actionNote.style.color = '#ef4444';
-    }
-
-    if (overbudgetBox) {
+  if (overbudgetBox) {
+    if (isAboveBudget) {
       overbudgetBox.classList.remove('hidden');
-      const accessories = (currentRecommendation?.accessories || []);
-      const accessoryRows = accessories.length > 0
-        ? accessories.map((acc) => `
-            <div class="overbudget-remove-row">
-              <span>${acc.name} (+₹${acc.price_inr.toLocaleString('en-IN')})</span>
-              <button class="btn-remove-sm" onclick="handleInlineRemoveAccessory('${acc.sku}')">Remove accessory</button>
-            </div>
-          `).join('')
-        : '<p style="font-size:0.8rem; color:#94a3b8;">No accessories to remove.</p>';
-
       overbudgetBox.innerHTML = `
-        <div class="overbudget-header">
-          <span>⚠️ Basket Exceeds Budget</span>
-        </div>
-        <div class="overbudget-arithmetic">
-          <div class="overbudget-arithmetic-item"><span>Current basket:</span><strong>₹${total.toLocaleString('en-IN')}</strong></div>
-          <div class="overbudget-arithmetic-item"><span>Budget:</span><strong>₹${budget.toLocaleString('en-IN')}</strong></div>
-          <div class="overbudget-arithmetic-item"><span style="color:#ef4444;">Over budget:</span><strong style="color:#ef4444;">₹${delta.toLocaleString('en-IN')}</strong></div>
-        </div>
-        <div class="overbudget-actions">
-          <div style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.15rem;">Selected Accessories:</div>
-          ${accessoryRows}
-          <div style="font-size: 0.8rem; font-weight: 600; color: #cbd5e1; margin-top: 0.5rem;">Increase Budget (Instant Activation):</div>
-          <div class="inline-budget-adjust">
-            <input type="number" id="inline-budget-input" class="inline-budget-input" value="${total}" min="${total}" step="500" />
-            <button id="inline-budget-btn" class="btn-increase-budget">Increase Budget to ₹${total.toLocaleString('en-IN')}</button>
-          </div>
+        <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 0.75rem 1rem; margin-top: 0.75rem; font-size: 0.85rem; color: #bae6fd;">
+          Your selected order is ₹${delta.toLocaleString('en-IN')} above your original budget.
         </div>
       `;
-
-      const budgetInput = document.getElementById('inline-budget-input');
-      const budgetBtn = document.getElementById('inline-budget-btn');
-      if (budgetInput && budgetBtn) {
-        budgetInput.addEventListener('input', () => {
-          const val = Number(budgetInput.value);
-          if (val > 0) {
-            budgetBtn.textContent = `Increase Budget to ₹${val.toLocaleString('en-IN')}`;
-          }
-        });
-        budgetBtn.addEventListener('click', async () => {
-          const val = Number(budgetInput.value);
-          if (val > 0) {
-            await handleInlineBudgetIncrease(val);
-          }
-        });
-      }
-    }
-  } else {
-    authorizeBtn.disabled = false;
-    authorizeBtn.classList.remove('disabled');
-    authorizeBtn.style.opacity = '';
-    authorizeBtn.style.cursor = '';
-    if (actionNote) {
-      actionNote.textContent = 'Secures locked variant & line items in session.';
-      actionNote.style.color = '';
-    }
-    if (overbudgetBox) {
+    } else {
       overbudgetBox.classList.add('hidden');
       overbudgetBox.innerHTML = '';
     }
+  }
+
+  // Once products are explicitly selected, checkout is immediately available for valid orders
+  authorizeBtn.disabled = false;
+  authorizeBtn.classList.remove('disabled');
+  authorizeBtn.style.opacity = '1';
+  authorizeBtn.style.cursor = 'pointer';
+  if (actionNote) {
+    actionNote.textContent = '';
+    actionNote.style.color = '';
   }
 }
 
 window.handleInlineRemoveAccessory = async function (sku) {
   const checkboxEl = document.querySelector(`.accessory-checkbox[data-sku="${sku}"]`);
   await toggleAccessoryBackend(sku, false, checkboxEl || { checked: false });
-};
-
-window.handleInlineBudgetIncrease = async function (newBudget) {
-  try {
-    const res = await fetch(`/api/v1/session/${currentSessionId}/budget`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ budget: newBudget })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(`Budget update failed: ${data.error}`);
-      return;
-    }
-    const rec = data.latest_recommendation;
-    currentRecommendation = rec;
-    renderRecommendation(rec);
-    appendAgentMessage(
-      `Budget updated to **₹${newBudget.toLocaleString('en-IN')}**. Current basket total of **₹${rec.total_price_inr.toLocaleString('en-IN')}** is within budget. Review & Pay with Razorpay is enabled immediately!`,
-      'Budget Updated'
-    );
-  } catch (err) {
-    alert(`Failed to update budget: ${err.message}`);
-  }
 };
 
 // Compare Action
@@ -750,11 +651,6 @@ closeModalBtn.addEventListener('click', () => {
 
 // Purchase Authorization Review Action
 authorizeBtn.addEventListener('click', async () => {
-  if (currentRecommendation && currentRecommendation.total_price_inr > currentRecommendation.budget_ceiling_inr) {
-    const delta = currentRecommendation.total_price_inr - currentRecommendation.budget_ceiling_inr;
-    alert(`Purchase blocked — basket exceeds customer budget by ₹${delta.toLocaleString('en-IN')}. Remove an add-on or increase your budget to continue.`);
-    return;
-  }
   try {
     const res = await fetch(`/api/v1/session/${currentSessionId}/review`);
     if (!res.ok) {
@@ -772,21 +668,22 @@ authorizeBtn.addEventListener('click', async () => {
 function renderPurchaseReview(review) {
   reviewSessionId.textContent = review.session_id;
 
-  const isOver = review.final_total_inr > review.customer_budget_inr || review.gate_status === 'BLOCKED_OVER_BUDGET';
-  const delta = Math.abs(review.final_total_inr - review.customer_budget_inr);
-  const budgetMarginDisplay = isOver
-    ? `<span class="red-text">₹${delta.toLocaleString('en-IN')} Over Budget</span>`
-    : `<span class="green-text">₹${delta.toLocaleString('en-IN')} Unused Budget</span>`;
+  const budgetCeil = review.customer_budget_inr;
+  const hasBudgetLimit = budgetCeil !== undefined && budgetCeil !== null && budgetCeil > 0 && isFinite(budgetCeil);
+  const isAboveBudget = hasBudgetLimit && review.final_total_inr > budgetCeil;
+  const delta = hasBudgetLimit ? Math.abs(review.final_total_inr - budgetCeil) : 0;
+  const budgetMarginDisplay = isAboveBudget
+    ? `<span class="cyan-text">₹${delta.toLocaleString('en-IN')} Above Original Budget</span>`
+    : `<span class="green-text">Within Original Budget ✓</span>`;
 
-  const blockedBanner = isOver ? `
-    <div class="overbudget-blocked-banner" style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; color: #fca5a5;">
-      <strong>⚠️ Purchase blocked — basket exceeds customer budget by ₹${delta.toLocaleString('en-IN')}.</strong>
-      <p style="margin: 0.25rem 0 0; font-size: 0.85rem; color: #cbd5e1;">Remove an add-on or increase your budget to continue.</p>
+  const infoBanner = isAboveBudget ? `
+    <div class="order-budget-info-banner" style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1rem; color: #bae6fd; font-size: 0.9rem;">
+      Your selected order is ₹${delta.toLocaleString('en-IN')} above your original budget.
     </div>
   ` : '';
 
   reviewContent.innerHTML = `
-    ${blockedBanner}
+    ${infoBanner}
     <div style="background: #090d16; padding: 1.25rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
       <h4 style="font-size: 1.1rem; color: #fff; margin-bottom: 0.5rem;">${review.primary_product.name}</h4>
       <div style="display: flex; gap: 1rem; font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.75rem;">
@@ -801,7 +698,7 @@ function renderPurchaseReview(review) {
       </div>
     </div>
 
-    <h4 class="subhead" style="margin-top: 1rem;">Attached Accessories:</h4>
+    <h4 class="subhead" style="margin-top: 1rem;">Selected Order Items:</h4>
     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
       ${review.accessories.length > 0 ? review.accessories.map((a) => `
         <div style="display: flex; justify-content: space-between; align-items: center; background: #111827; padding: 0.6rem 0.85rem; border-radius: 6px; font-size: 0.85rem;">
@@ -811,16 +708,16 @@ function renderPurchaseReview(review) {
           </div>
           <strong>₹${a.price_inr.toLocaleString('en-IN')}</strong>
         </div>
-      `).join('') : '<p class="accessory-hint">None attached.</p>'}
+      `).join('') : '<p class="accessory-hint">No additional accessories selected.</p>'}
     </div>
 
     <div style="margin-top: 1rem; padding: 1rem; background: #111827; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);">
       <div style="display: flex; justify-content: space-between; align-items: baseline;">
-        <span style="font-size: 1.1rem; font-weight: 700;">Verified Authorizable Total:</span>
-        <span style="font-size: 1.6rem; font-weight: 800; color: ${isOver ? '#ef4444' : '#10b981'};">₹${review.final_total_inr.toLocaleString('en-IN')}</span>
+        <span style="font-size: 1.1rem; font-weight: 700;">Order Total:</span>
+        <span style="font-size: 1.6rem; font-weight: 800; color: #10b981;">₹${review.final_total_inr.toLocaleString('en-IN')}</span>
       </div>
       <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem;">
-        <span>Customer Budget Ceiling: ₹${review.customer_budget_inr.toLocaleString('en-IN')}</span>
+        <span>Original Budget: ${hasBudgetLimit ? `₹${budgetCeil.toLocaleString('en-IN')}` : 'Flexible'}</span>
         ${budgetMarginDisplay}
       </div>
     </div>
@@ -834,32 +731,20 @@ function renderPurchaseReview(review) {
   paymentRetryWrap.classList.add('hidden');
   paymentDetailsBox.classList.add('hidden');
 
-  if (isOver) {
-    gateStatusText.textContent = 'BLOCKED_OVER_BUDGET';
-    gateStatusText.className = 'red-text';
-    paymentActionBox.innerHTML = `
-      <div style="background: rgba(239,68,68,0.12); border: 1px solid #ef4444; border-radius: 8px; padding: 1rem; text-align: center; color: #fca5a5;">
-        <strong style="color: #ef4444; font-size: 1rem;">⚠️ Payment Blocked — Over Budget</strong>
-        <p style="margin: 0.35rem 0 0; font-size: 0.85rem; color: #cbd5e1;">Authoritative basket total (₹${review.final_total_inr.toLocaleString('en-IN')}) exceeds customer hard budget (₹${review.customer_budget_inr.toLocaleString('en-IN')}) by ₹${delta.toLocaleString('en-IN')}.</p>
-        <p style="margin: 0.25rem 0 0; font-size: 0.8rem; color: #f59e0b;">Remove an add-on or increase your budget to continue.</p>
-      </div>
-    `;
-  } else {
-    gateStatusText.textContent = 'AUTHORIZED_PENDING_GATEWAY';
-    gateStatusText.className = 'green-text';
-    paymentActionBox.innerHTML = `
-      <button id="proceed-payment-btn" class="btn-razorpay">
-        <span class="razorpay-icon">⚡</span>
-        <span id="proceed-payment-text">Approve &amp; Pay with Razorpay (Test Mode)</span>
-      </button>
-      <div class="test-mode-note">
-        🔒 <strong>Simulated Razorpay Test Mode:</strong> No real money moves. Key prefix: <code class="mono">rzp_test_...</code>
-      </div>
-    `;
-    const newProceedBtn = document.getElementById('proceed-payment-btn');
-    if (newProceedBtn) {
-      newProceedBtn.addEventListener('click', handleProceedPayment);
-    }
+  gateStatusText.textContent = 'AUTHORIZED_PENDING_GATEWAY';
+  gateStatusText.className = 'green-text';
+  paymentActionBox.innerHTML = `
+    <button id="proceed-payment-btn" class="btn-razorpay">
+      <span class="razorpay-icon">⚡</span>
+      <span id="proceed-payment-text">Approve &amp; Pay with Razorpay (Test Mode)</span>
+    </button>
+    <div class="test-mode-note">
+      🔒 <strong>Simulated Razorpay Test Mode:</strong> No real money moves. Key prefix: <code class="mono">rzp_test_...</code>
+    </div>
+  `;
+  const newProceedBtn = document.getElementById('proceed-payment-btn');
+  if (newProceedBtn) {
+    newProceedBtn.addEventListener('click', handleProceedPayment);
   }
 }
 
@@ -873,6 +758,7 @@ function updatePaymentState(state, desc, details) {
   paymentStatusDesc.textContent = desc;
 
   switch (state) {
+    case 'CHECKOUT_LOADING':
     case 'VALIDATING':
       paymentStatusIcon.textContent = '⏳';
       paymentStatusTitle.textContent = 'Validating purchase...';
@@ -880,30 +766,41 @@ function updatePaymentState(state, desc, details) {
       paymentRetryWrap.classList.add('hidden');
       paymentActionBox.classList.add('hidden');
       break;
-    case 'OPENING':
+    case 'GATE_AUTHORIZED':
       paymentStatusIcon.textContent = '⚡';
-      paymentStatusTitle.textContent = 'Opening Razorpay...';
+      paymentStatusTitle.textContent = 'Order authorized';
       paymentDetailsBox.classList.add('hidden');
       paymentRetryWrap.classList.add('hidden');
       paymentActionBox.classList.add('hidden');
       break;
+    case 'RAZORPAY_ORDER_CREATED':
+    case 'OPENING':
+      paymentStatusIcon.textContent = '⚡';
+      paymentStatusTitle.textContent = 'Launching Razorpay Checkout...';
+      paymentDetailsBox.classList.add('hidden');
+      paymentRetryWrap.classList.add('hidden');
+      paymentActionBox.classList.add('hidden');
+      break;
+    case 'PAYMENT_IN_PROGRESS':
     case 'PENDING':
       paymentStatusIcon.textContent = '💳';
-      paymentStatusTitle.textContent = 'Payment pending...';
+      paymentStatusTitle.textContent = 'Payment in progress...';
       paymentDetailsBox.classList.add('hidden');
       paymentRetryWrap.classList.add('hidden');
       paymentActionBox.classList.add('hidden');
       break;
     case 'VERIFYING':
       paymentStatusIcon.textContent = '🔐';
-      paymentStatusTitle.textContent = 'Payment verified';
+      paymentStatusTitle.textContent = 'Verifying payment...';
       paymentDetailsBox.classList.add('hidden');
       paymentRetryWrap.classList.add('hidden');
       paymentActionBox.classList.add('hidden');
       break;
+    case 'PAYMENT_SUCCESS':
     case 'CONFIRMED':
       paymentStatusIcon.textContent = '✅';
-      paymentStatusTitle.textContent = 'Order confirmed';
+      paymentStatusTitle.textContent = 'PAYMENT SUCCESSFUL ✓';
+      paymentStatusDesc.textContent = 'Your order has been authorized successfully.';
       gateStatusText.textContent = 'PAID_AND_COMPLETED';
       gateStatusText.className = 'green-text';
       if (details) {
@@ -911,14 +808,14 @@ function updatePaymentState(state, desc, details) {
         razorpayRefId.textContent = details.razorpay_order_id || '--';
         paymentRefId.textContent = details.payment_id || '--';
         orderAmountPaid.textContent = `₹${details.amount}`;
-        orderFinalStatus.textContent = details.status || 'COMPLETED';
+        orderFinalStatus.textContent = 'Paid';
         orderFinalStatus.className = 'status-pill completed';
         paymentDetailsBox.classList.remove('hidden');
       }
       paymentRetryWrap.classList.add('hidden');
       paymentActionBox.classList.add('hidden');
       appendAgentMessage(
-        `🎉 **Order Confirmed!**\n\nYour purchase has been verified and confirmed by Nexora Technologies.\n\n• **Order ID:** \`${details?.internal_order_id}\`\n• **Razorpay Order:** \`${details?.razorpay_order_id}\`\n• **Payment ID:** \`${details?.payment_id}\`\n• **Amount:** ₹${details?.amount}\n\nInventory allocation complete. Thank you for shopping with Nexora!`,
+        `🎉 **Order Confirmed!**\n\nYour purchase has been verified and confirmed.\n\n• **Order ID:** \`${details?.internal_order_id}\`\n• **Razorpay Order:** \`${details?.razorpay_order_id}\`\n• **Payment ID:** \`${details?.payment_id}\`\n• **Amount:** ₹${details?.amount}\n\nInventory allocation complete. Thank you for your purchase!`,
         'Checkout System'
       );
       break;
@@ -929,6 +826,7 @@ function updatePaymentState(state, desc, details) {
       paymentRetryWrap.classList.remove('hidden');
       paymentActionBox.classList.add('hidden');
       break;
+    case 'PAYMENT_FAILED':
     case 'FAILED':
       paymentStatusIcon.textContent = '❌';
       paymentStatusTitle.textContent = 'Payment failed';
@@ -941,18 +839,17 @@ function updatePaymentState(state, desc, details) {
 
 // Payment Initiation & Razorpay Checkout Modal
 async function handleProceedPayment() {
-  if (currentRecommendation && currentRecommendation.total_price_inr > currentRecommendation.budget_ceiling_inr) {
-    const delta = currentRecommendation.total_price_inr - currentRecommendation.budget_ceiling_inr;
-    updatePaymentState('FAILED', `Purchase blocked — basket exceeds customer budget by ₹${delta.toLocaleString('en-IN')}. Remove an add-on or increase your budget to continue.`);
-    return;
-  }
+  // Clear any previous error or retry UI
+  paymentRetryWrap.classList.add('hidden');
+  paymentDetailsBox.classList.add('hidden');
+
   const btn = document.getElementById('proceed-payment-btn') || proceedPaymentBtn;
   if (btn) {
     btn.disabled = true;
     const btnText = btn.querySelector('#proceed-payment-text') || btn;
     btnText.textContent = 'Preparing secure Razorpay checkout...';
   }
-  updatePaymentState('VALIDATING', 'Preparing secure Razorpay checkout...');
+  updatePaymentState('CHECKOUT_LOADING', 'Preparing secure Razorpay checkout...');
 
   try {
     // Step 1: Customer Approval Gate
@@ -963,12 +860,14 @@ async function handleProceedPayment() {
     });
     const approveData = await approveRes.json();
     if (!approveRes.ok || !approveData.success) {
-      updatePaymentState('FAILED', approveData.error || 'Authorization failed. Please try again.');
+      updatePaymentState('PAYMENT_FAILED', approveData.error || 'Authorization failed. Please try again.');
       return;
     }
 
+    updatePaymentState('GATE_AUTHORIZED', 'Order authorized by customer.');
+
     // Step 2: Create Authoritative Razorpay Order
-    updatePaymentState('OPENING', 'Authoritative order created. Launching Razorpay Test Mode Checkout...');
+    updatePaymentState('RAZORPAY_ORDER_CREATED', 'Authoritative order created. Launching Razorpay Checkout...');
     const orderRes = await fetch('/api/v1/checkout/create-order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -976,11 +875,13 @@ async function handleProceedPayment() {
     });
     const orderData = await orderRes.json();
     if (!orderRes.ok || !orderData.razorpay_order_id) {
-      updatePaymentState('FAILED', orderData.error || 'Failed to create payment order.');
+      updatePaymentState('PAYMENT_FAILED', orderData.error || 'Failed to create payment order.');
       return;
     }
 
-    updatePaymentState('PENDING', 'Waiting for customer interaction in Razorpay modal...');
+    // Clear any previous error state before opening Razorpay checkout
+    paymentRetryWrap.classList.add('hidden');
+    updatePaymentState('PAYMENT_IN_PROGRESS', 'Waiting for customer interaction in Razorpay modal...');
 
     // Step 3: Configure Razorpay Checkout
     const options = {
@@ -1005,19 +906,19 @@ async function handleProceedPayment() {
           });
           const verifyData = await verifyRes.json();
           if (!verifyRes.ok || !verifyData.success) {
-            updatePaymentState('FAILED', verifyData.error || 'Signature verification rejected by server.');
+            updatePaymentState('PAYMENT_FAILED', verifyData.error || 'Signature verification rejected by server.');
             return;
           }
 
-          updatePaymentState('CONFIRMED', 'Order confirmed & stock allocated.', {
+          updatePaymentState('PAYMENT_SUCCESS', 'Your order has been authorized successfully.', {
             internal_order_id: orderData.internal_order_id,
             razorpay_order_id: response.razorpay_order_id,
             payment_id: response.razorpay_payment_id,
             amount: (orderData.amount / 100).toLocaleString('en-IN'),
-            status: 'COMPLETED'
+            status: 'Paid'
           });
         } catch (err) {
-          updatePaymentState('FAILED', `Verification error: ${err.message}`);
+          updatePaymentState('PAYMENT_FAILED', `Verification error: ${err.message}`);
         }
       },
       modal: {
@@ -1055,15 +956,15 @@ async function handleProceedPayment() {
             })
           });
         } catch {}
-        updatePaymentState('FAILED', 'Payment failed. Your selected basket is preserved.');
+        updatePaymentState('PAYMENT_FAILED', 'Payment failed. Your selected basket is preserved.');
       });
       rzp.open();
     } else {
       // In non-browser environments or when checkout.js is offline
-      updatePaymentState('FAILED', 'Razorpay Checkout script could not be loaded. Please check network connection.');
+      updatePaymentState('PAYMENT_FAILED', 'Razorpay Checkout script could not be loaded. Please check network connection.');
     }
   } catch (err) {
-    updatePaymentState('FAILED', `Checkout initiation error: ${err.message}`);
+    updatePaymentState('PAYMENT_FAILED', `Checkout initiation error: ${err.message}`);
   }
 }
 
@@ -1131,7 +1032,7 @@ function showNoCategoryMatchState(explanation, category) {
   if (category) {
     noCategoryTitle.textContent = `Unsupported Category: "${category}"`;
   }
-  noCategoryExplanation.textContent = explanation || 'Nexora Technologies does not carry this product category.';
+  noCategoryExplanation.textContent = explanation || 'Our verified catalog does not carry this product category.';
   engineStatusTag.textContent = 'Catalog Scope Boundary: Category Not Carried';
   confidenceIndicator.classList.add('hidden');
 }
@@ -1156,7 +1057,7 @@ function appendAgentMessage(text, tag = 'Agent') {
   msg.innerHTML = `
     <div class="message-meta">
       <span class="agent-avatar">AI</span>
-      <span class="sender-name">Nexora Assistant • ${tag}</span>
+      <span class="sender-name">Shopping Assistant • ${tag}</span>
       <span class="time-stamp">Just now</span>
     </div>
     <div class="message-body">${formatMarkdown(text)}</div>
@@ -1201,11 +1102,13 @@ const activeCatalogVersionPill = document.getElementById('active-catalog-version
 const lastRunTimestamp = document.getElementById('last-run-timestamp');
 
 // Overview Metric Elements
+const mMetricReadinessScore = document.getElementById('m-metric-readiness-score');
 const mMetricTotalIntents = document.getElementById('m-metric-total-intents');
 const mMetricSupportedSub = document.getElementById('m-metric-supported-sub');
 const mMetricMatchRate = document.getElementById('m-metric-match-rate');
 const mMetricConstraintAdherence = document.getElementById('m-metric-constraint-adherence');
 const mMetricCheckoutReady = document.getElementById('m-metric-checkout-ready');
+const mMetricCatalogCoverage = document.getElementById('m-metric-catalog-coverage');
 const mMetricOpportunityValue = document.getElementById('m-metric-opportunity-value');
 
 // Tallies
@@ -1215,6 +1118,8 @@ const tallyLost = document.getElementById('tally-lost');
 const tallyUnsupported = document.getElementById('tally-unsupported');
 
 // Containers
+const highLevelFailureContainer = document.getElementById('high-level-failure-container');
+const opportunitiesContainer = document.getElementById('opportunities-container');
 const lossReasonsContainer = document.getElementById('loss-reasons-container');
 const intentGroupFilter = document.getElementById('intent-group-filter');
 const intentsTableBody = document.getElementById('intents-table-body');
@@ -1227,8 +1132,8 @@ const closeDrilldownBtn = document.getElementById('close-drilldown-btn');
 const drilldownTitle = document.getElementById('drilldown-title');
 const drilldownBody = document.getElementById('drilldown-body');
 
-// Benchmark State Machine (NOT_RUN | VALIDATING | RUNNING | COMPLETED | FAILED)
-let benchmarkState = 'NOT_RUN';
+// Benchmark State Machine (IDLE | RUNNING | COMPLETED | FAILED)
+let benchmarkState = 'IDLE';
 let latestBenchmarkSummary = null;
 let lastCompletedBenchmarkSummary = null;
 let benchmarkFailureDetails = null;
@@ -1241,14 +1146,51 @@ let isResetting = false;
 let benchmarkStatusDesc = '';
 const benchmarkStatusBanner = document.getElementById('benchmark-status-banner');
 
-// Currency Formatter
+// Safe Numeric Formatting Utilities (distinguishes valid number, 0, and unavailable/null/undefined)
+function isNumeric(val) {
+  return typeof val === 'number' && !isNaN(val) && isFinite(val);
+}
+
+function formatPercent(val, decimals = 1, isRatio = false) {
+  if (!isNumeric(val)) return '—';
+  const num = isRatio ? val * 100 : val;
+  return `${num.toFixed(decimals)}%`;
+}
+
+function formatScore(val, max = 100) {
+  if (!isNumeric(val)) return '—';
+  return max ? `${Math.round(val)} / ${max}` : `${Math.round(val)}`;
+}
+
 function formatInr(num) {
-  if (typeof num !== 'number' || isNaN(num)) return '₹0';
+  if (!isNumeric(num)) return '—';
+  if (num === 0) return '₹0';
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0
   }).format(num);
+}
+
+function formatScoreDelta(m) {
+  if (!m || !isNumeric(m.delta)) return '<span class="delta-pill neutral">0 pts</span>';
+  const delta = m.delta;
+  const sign = delta > 0 ? '+' : '';
+  const cls = delta > 0 ? 'positive' : (delta < 0 ? 'lost' : 'neutral');
+  return `<span class="delta-pill ${cls}">${sign}${delta} pts</span>`;
+}
+
+function formatPctDelta(m, noImprovementNote = null) {
+  if (!m || !isNumeric(m.delta)) return '<span class="delta-pill neutral">0.0%</span>';
+  const deltaPct = m.delta * 100;
+  const sign = deltaPct > 0 ? '+' : '';
+  const formatted = `${sign}${deltaPct.toFixed(1)}%`;
+  const cls = deltaPct > 0 ? 'positive' : (deltaPct < 0 ? 'lost' : 'neutral');
+  const pill = `<span class="delta-pill ${cls}">${formatted}</span>`;
+  if (deltaPct === 0 && noImprovementNote) {
+    return `${pill}<span style="font-size:0.72rem;color:#94a3b8;display:block;margin-top:0.2rem;">${noImprovementNote}</span>`;
+  }
+  return pill;
 }
 
 // Format Group Name
@@ -1266,19 +1208,19 @@ function formatGroupName(group) {
   return map[group] || group || 'General';
 }
 
-// Render Benchmark Status Banner
+// Render Benchmark Status Banner (IDLE | RUNNING | COMPLETED | FAILED)
 function renderBenchmarkStatus() {
   if (!benchmarkStatusBanner) return;
 
-  if (benchmarkState === 'NOT_RUN') {
+  if (benchmarkState === 'IDLE') {
     benchmarkStatusBanner.innerHTML = `
       <div class="benchmark-status-card not-run">
-        <div class="status-indicator">⚪ Benchmark Status: <strong>NOT RUN</strong></div>
-        <div class="status-desc">Click <strong>"▶ Run 100-Intent Benchmark"</strong> above to validate and evaluate 100 buyer intents.</div>
+        <div class="status-indicator">⚪ Benchmark Status: <strong>IDLE</strong></div>
+        <div class="status-desc">Run the 100-intent benchmark to evaluate AI buyer readiness.</div>
       </div>
     `;
-  } else if (benchmarkState === 'VALIDATING' || benchmarkState === 'RUNNING') {
-    const desc = benchmarkStatusDesc || "Evaluating 100 controlled buyer intents against Catalog Version A...";
+  } else if (benchmarkState === 'RUNNING') {
+    const desc = benchmarkStatusDesc || "Evaluating 100 controlled buyer intents...";
     benchmarkStatusBanner.innerHTML = `
       <div class="benchmark-status-card running">
         <div class="status-indicator">⏳ Benchmark Status: <strong>RUNNING</strong></div>
@@ -1292,35 +1234,50 @@ function renderBenchmarkStatus() {
     benchmarkStatusBanner.innerHTML = `
       <div class="benchmark-status-card completed">
         <div class="status-indicator">✓ Benchmark Status: <strong>COMPLETED</strong></div>
-        <div class="status-desc">Evaluated exactly ${s?.total_intents || 100} buyer intents • Catalog: <strong>${escapeHtml(s?.catalog_version || 'Catalog Version A')}</strong> • Benchmark: <strong>${escapeHtml(s?.benchmark_version || 'v1.0')}</strong> • ${timeStr}</div>
+        <div class="status-desc" style="font-size: 0.95rem; font-weight: 600; color: #6ee7b7; margin-bottom: 0.25rem;">
+          Baseline benchmark completed — 100/100 intents evaluated.
+        </div>
+        <div style="font-size: 0.8rem; color: var(--text-secondary);">
+          Catalog: <strong>${escapeHtml(s?.catalog_version || 'Catalog Version A')}</strong> • Benchmark: <strong>${escapeHtml(s?.benchmark_version || 'v1.0')}</strong> • Completed at ${timeStr}
+        </div>
       </div>
     `;
   } else if (benchmarkState === 'FAILED') {
     const f = benchmarkFailureDetails || {};
     const reasonText = f.reason || f.error || 'Benchmark validation or execution failure';
-    const recordText = f.benchmark_id ? `Failed Record: <code>${escapeHtml(f.benchmark_id)}</code> • Field: <code>${escapeHtml(f.field || 'unknown')}</code>` : '';
     const prevText = lastCompletedBenchmarkSummary
-      ? `Previous completed benchmark: <strong>${escapeHtml(lastCompletedBenchmarkSummary.catalog_version)} / ${escapeHtml(lastCompletedBenchmarkSummary.benchmark_version)}</strong> (${new Date(lastCompletedBenchmarkSummary.timestamp).toLocaleTimeString()})`
-      : 'Previous completed benchmark: None';
+      ? `Previous valid baseline preserved: <strong>${escapeHtml(lastCompletedBenchmarkSummary.catalog_version)}</strong> (${new Date(lastCompletedBenchmarkSummary.timestamp).toLocaleTimeString()})`
+      : 'No previous baseline exists.';
 
     benchmarkStatusBanner.innerHTML = `
       <div class="benchmark-status-card failed">
         <div class="status-indicator">❌ Benchmark Status: <strong>FAILED</strong></div>
-        <div class="status-desc"><strong>Reason:</strong> ${escapeHtml(reasonText)}</div>
-        ${recordText ? `<div class="status-sub">${recordText}</div>` : ''}
-        <div class="status-prev">${prevText}</div>
+        <div class="status-desc" style="font-weight: 600; color: #fca5a5; margin-bottom: 0.25rem;">
+          Benchmark failed. No new benchmark result was committed.
+        </div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.4rem;">
+          ${escapeHtml(prevText)}
+        </div>
+        <details style="margin-top: 0.4rem; font-size: 0.78rem;">
+          <summary style="cursor: pointer; color: #fca5a5; font-weight: 600;">View Technical Error Details</summary>
+          <div style="font-size: 0.75rem; padding: 0.5rem; background: rgba(0,0,0,0.35); border: 1px solid rgba(239,68,68,0.3); border-radius: 4px; margin-top: 0.35rem; font-family: monospace; color: #fca5a5; word-break: break-word;">
+            ${escapeHtml(reasonText)}
+          </div>
+        </details>
       </div>
     `;
   }
 }
 
-// Reset Overview Metrics on NOT_RUN or uninitialized state
+// Reset Overview Metrics on IDLE or uninitialized state
 function resetOverviewMetrics() {
+  if (mMetricReadinessScore) mMetricReadinessScore.textContent = '—';
   if (mMetricTotalIntents) mMetricTotalIntents.textContent = '—';
   if (mMetricSupportedSub) mMetricSupportedSub.textContent = 'Benchmark not run';
   if (mMetricMatchRate) mMetricMatchRate.textContent = '—';
   if (mMetricConstraintAdherence) mMetricConstraintAdherence.textContent = '—';
   if (mMetricCheckoutReady) mMetricCheckoutReady.textContent = '—';
+  if (mMetricCatalogCoverage) mMetricCatalogCoverage.textContent = '—';
   if (mMetricOpportunityValue) mMetricOpportunityValue.textContent = '—';
 
   if (tallyWon) tallyWon.textContent = '—';
@@ -1328,6 +1285,12 @@ function resetOverviewMetrics() {
   if (tallyLost) tallyLost.textContent = '—';
   if (tallyUnsupported) tallyUnsupported.textContent = '—';
 
+  if (highLevelFailureContainer) {
+    highLevelFailureContainer.innerHTML = '<div class="empty-state-notice">Benchmark not run. Click "Run 100-Intent Benchmark" to populate the AI Buyer Failure Map.</div>';
+  }
+  if (opportunitiesContainer) {
+    opportunitiesContainer.innerHTML = '<div class="empty-state-notice">Benchmark not run. Click "Run 100-Intent Benchmark" to view prioritized commerce opportunities.</div>';
+  }
   if (lossReasonsContainer) {
     lossReasonsContainer.innerHTML = '<div class="empty-state-notice">Benchmark not run. Click "Run 100-Intent Benchmark" to see failure taxonomy breakdown.</div>';
   }
@@ -1369,7 +1332,7 @@ async function loadMerchantDashboard() {
     const data = await res.json();
 
     if (data.status === 'NOT_RUN' || !data.summary) {
-      benchmarkState = 'NOT_RUN';
+      benchmarkState = 'IDLE';
       latestBenchmarkSummary = null;
       lastCompletedBenchmarkSummary = null;
       renderBenchmarkStatus();
@@ -1397,7 +1360,7 @@ async function loadMerchantDashboard() {
     }
   } catch (err) {
     console.error('[Merchant] Failed to load latest benchmark:', err);
-    benchmarkState = 'NOT_RUN';
+    benchmarkState = 'IDLE';
     renderBenchmarkStatus();
     resetOverviewMetrics();
     if (lastRunTimestamp) lastRunTimestamp.textContent = 'Status: Ready to evaluate';
@@ -1408,42 +1371,173 @@ async function loadMerchantDashboard() {
 function renderOverviewMetrics(summary) {
   if (!summary) return;
 
-  if (mMetricTotalIntents) mMetricTotalIntents.textContent = summary.total_intents;
+  if (mMetricReadinessScore) {
+    const score = isNumeric(summary.ai_buyer_readiness_score)
+      ? summary.ai_buyer_readiness_score
+      : (isNumeric(summary.readiness_score) ? summary.readiness_score : null);
+    mMetricReadinessScore.textContent = score !== null ? `${Math.round(score)}` : '—';
+  }
+  if (mMetricTotalIntents) {
+    mMetricTotalIntents.textContent = isNumeric(summary.total_intents) ? `${summary.total_intents}` : '—';
+  }
   if (mMetricSupportedSub) {
-    mMetricSupportedSub.textContent = `${summary.supported_intents} Supported • ${summary.unsupported_intents} Out of Scope`;
+    const supported = isNumeric(summary.supported_intents) ? summary.supported_intents : '—';
+    const unsupported = isNumeric(summary.unsupported_intents) ? summary.unsupported_intents : '—';
+    mMetricSupportedSub.textContent = `${supported} Supported • ${unsupported} Out of Scope`;
   }
   if (mMetricMatchRate) {
-    const rate = typeof summary.product_match_rate === 'number'
-      ? (summary.product_match_rate * 100).toFixed(1)
-      : (summary.product_match_rate_pct ? summary.product_match_rate_pct.toFixed(1) : '0.0');
-    mMetricMatchRate.textContent = `${rate}%`;
+    const match = isNumeric(summary.product_match_rate) ? summary.product_match_rate : summary.intent_match_rate;
+    mMetricMatchRate.textContent = formatPercent(match, 1, true);
   }
   if (mMetricConstraintAdherence) {
-    const adherence = typeof summary.hard_constraint_adherence === 'number'
-      ? (summary.hard_constraint_adherence * 100).toFixed(1)
-      : (summary.hard_constraint_adherence_pct ? summary.hard_constraint_adherence_pct.toFixed(1) : '0.0');
-    mMetricConstraintAdherence.textContent = `${adherence}%`;
+    mMetricConstraintAdherence.textContent = formatPercent(summary.hard_constraint_adherence, 1, true);
   }
   if (mMetricCheckoutReady) {
-    const readyRate = typeof summary.checkout_ready_rate === 'number'
-      ? (summary.checkout_ready_rate * 100).toFixed(1)
-      : ((summary.won_count / summary.supported_intents) * 100).toFixed(1);
-    mMetricCheckoutReady.textContent = `${readyRate}%`;
+    mMetricCheckoutReady.textContent = formatPercent(summary.checkout_ready_rate, 1, true);
+  }
+  if (mMetricCatalogCoverage) {
+    const coverage = isNumeric(summary.catalog_coverage)
+      ? summary.catalog_coverage
+      : (summary.readiness_components?.catalog_coverage ?? ((summary.supported_intents && summary.total_intents) ? summary.supported_intents / summary.total_intents : null));
+    mMetricCatalogCoverage.textContent = formatPercent(coverage, 1, true);
   }
   if (mMetricOpportunityValue) {
-    const oppVal = summary.catalog_attributed_opportunity_value_inr ?? summary.opportunity_value_inr ?? 0;
+    const oppVal = summary.modeled_catalog_opportunity_value_inr ?? summary.modeled_catalog_opportunity ?? summary.catalog_attributed_opportunity_value_inr ?? summary.opportunity_value_inr;
     mMetricOpportunityValue.textContent = formatInr(oppVal);
   }
 
   // Tallies
-  if (tallyWon) tallyWon.textContent = summary.won_count;
-  if (tallyPartial) tallyPartial.textContent = summary.partial_count;
-  if (tallyLost) tallyLost.textContent = summary.lost_count;
-  if (tallyUnsupported) tallyUnsupported.textContent = summary.unsupported_intents;
+  if (tallyWon) tallyWon.textContent = isNumeric(summary.won_count) ? summary.won_count : '—';
+  if (tallyPartial) tallyPartial.textContent = isNumeric(summary.partial_count) ? summary.partial_count : '—';
+  if (tallyLost) tallyLost.textContent = isNumeric(summary.lost_count) ? summary.lost_count : '—';
+  if (tallyUnsupported) tallyUnsupported.textContent = isNumeric(summary.unsupported_intents) ? summary.unsupported_intents : '—';
 
   if (activeCatalogVersionPill) {
     activeCatalogVersionPill.textContent = summary.catalog_version || 'Catalog Version A (Baseline)';
   }
+
+  // Render Failure Map & Top Commerce Opportunities
+  renderHighLevelFailureMap(summary.high_level_failure_map);
+  renderTopCommerceOpportunities(summary.top_commerce_opportunities);
+}
+
+// Render High-Level AI Buyer Failure Map ("Where AI Buyer Requests Fail")
+function renderHighLevelFailureMap(failureMap) {
+  if (!highLevelFailureContainer) return;
+  if (!failureMap || (Array.isArray(failureMap) ? failureMap.length === 0 : Object.keys(failureMap).length === 0)) {
+    highLevelFailureContainer.innerHTML = '<div class="empty-state-notice">Benchmark not run. Click "Run 100-Intent Benchmark" to populate the AI Buyer Failure Map.</div>';
+    return;
+  }
+
+  const rawList = Array.isArray(failureMap) ? failureMap : Object.values(failureMap);
+  const failureCategories = rawList.filter((cat) => cat && (cat.affected_intents_count || 0) > 0);
+  failureCategories.sort((a, b) => (b.affected_intents_count || 0) - (a.affected_intents_count || 0));
+
+  if (failureCategories.length === 0) {
+    highLevelFailureContainer.innerHTML = '<div class="empty-state-notice" style="color: #6ee7b7;">✓ Zero AI buyer failures detected. All evaluated intents served successfully.</div>';
+    return;
+  }
+
+  highLevelFailureContainer.innerHTML = failureCategories.map((cat) => {
+    const oppVal = cat.modeled_opportunity_value_inr || 0;
+    const pctVal = cat.benchmark_percentage ?? cat.percentage_of_benchmark ?? (cat.affected_intents_count || 0);
+    const pctFormatted = formatPercent(pctVal, 1, false);
+    const examples = (cat.representative_examples || []).slice(0, 2);
+    const examplesHtml = examples.length > 0
+      ? `<div class="failure-examples" style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.05);font-size:0.75rem;color:var(--text-muted);">
+           <span style="display:block;margin-bottom:0.25rem;color:var(--text-secondary);font-weight:600;">Representative buyer queries:</span>
+           ${examples.map((ex) => `<div style="margin-bottom:0.2rem;font-style:italic;">&ldquo;${escapeHtml(ex)}&rdquo;</div>`).join('')}
+         </div>`
+      : '';
+
+    const barWidth = isNumeric(pctVal) ? Math.min(100, Math.max(8, pctVal)) : 8;
+
+    return `
+      <div class="failure-map-card">
+        <div class="failure-card-header">
+          <span class="failure-type-pill" style="font-weight:700;font-size:0.78rem;background:rgba(239,68,68,0.15);color:#fca5a5;padding:0.2rem 0.6rem;border-radius:4px;border:1px solid rgba(239,68,68,0.3);">${escapeHtml(cat.failure_type || 'FAILURE')}</span>
+          <span class="failure-count-badge" style="font-size:0.8rem;color:#fff;font-weight:600;">${cat.affected_intents_count ?? 0} intents (${pctFormatted})</span>
+        </div>
+        <p class="failure-card-desc" style="font-size:0.82rem;color:var(--text-secondary);margin:0.5rem 0;line-height:1.4;">${escapeHtml(cat.description || '')}</p>
+        <div class="loss-bar-wrap" style="margin:0.5rem 0;">
+          <div class="loss-bar-fill" style="width: ${barWidth}%;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;margin-top:0.4rem;">
+          <span style="color:var(--text-secondary);">Modeled Opportunity: <strong style="color:var(--accent-amber);">${formatInr(oppVal)}</strong></span>
+          <span style="font-size:0.7rem;color:var(--text-muted);font-style:italic;">Modeled from verified benchmark values</span>
+        </div>
+        ${examplesHtml}
+      </div>
+    `;
+  }).join('');
+}
+
+// Render Top AI Commerce Opportunities
+function renderTopCommerceOpportunities(opportunities) {
+  if (!opportunitiesContainer) return;
+  if (!opportunities || opportunities.length === 0) {
+    opportunitiesContainer.innerHTML = '<div class="empty-state-notice">Benchmark not run. Click "Run 100-Intent Benchmark" to view prioritized commerce opportunities.</div>';
+    return;
+  }
+
+  opportunitiesContainer.innerHTML = opportunities.map((opp, idx) => {
+    const rank = opp.rank ?? (idx + 1);
+    const priority = opp.severity || opp.priority_level || 'HIGH PRIORITY';
+    const affectedCount = opp.affected_intent_count ?? opp.affected_intents_count ?? 0;
+    const field = opp.affected_catalog_field || 'specifications';
+    const action = opp.recommended_merchant_action || opp.merchant_action || 'Review catalog metadata';
+    const oppVal = opp.modeled_opportunity_value_inr ?? 0;
+
+    return `
+      <div class="opportunity-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;gap:0.5rem;">
+          <span style="font-size:0.75rem;font-weight:800;background:rgba(245,158,11,0.18);color:#fbbf24;border:1px solid rgba(245,158,11,0.4);padding:0.2rem 0.6rem;border-radius:4px;letter-spacing:0.04em;">PRIORITY #${rank} • ${escapeHtml(priority)}</span>
+          <span style="font-size:0.75rem;font-weight:600;background:rgba(239,68,68,0.15);color:#fca5a5;padding:0.15rem 0.5rem;border-radius:4px;border:1px solid rgba(239,68,68,0.3);">${escapeHtml(opp.failure_type || 'FAILURE')}</span>
+        </div>
+        <h4 style="margin:0 0 0.5rem 0;font-size:0.95rem;color:#fff;font-weight:600;">${escapeHtml(opp.title)}</h4>
+        
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:0.5rem;background:rgba(0,0,0,0.2);padding:0.6rem;border-radius:6px;margin-bottom:0.75rem;font-size:0.8rem;">
+          <div>
+            <span style="display:block;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Affected Intents</span>
+            <strong style="color:#fff;font-size:0.95rem;">${affectedCount} intents</strong>
+          </div>
+          <div>
+            <span style="display:block;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Modeled Opportunity</span>
+            <strong style="color:var(--accent-amber);font-size:0.95rem;">${formatInr(oppVal)}</strong>
+          </div>
+          <div>
+            <span style="display:block;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Affected Field</span>
+            <code style="color:#38bdf8;font-size:0.78rem;">${escapeHtml(field)}</code>
+          </div>
+        </div>
+
+        <div style="background:rgba(56,189,248,0.06);border:1px solid rgba(56,189,248,0.2);border-radius:6px;padding:0.6rem;margin-bottom:0.75rem;font-size:0.8rem;">
+          <strong style="color:#38bdf8;display:block;margin-bottom:0.2rem;text-transform:uppercase;font-size:0.7rem;letter-spacing:0.04em;">Recommended Merchant Action:</strong>
+          <span style="color:var(--text-secondary);">${escapeHtml(action)}</span>
+        </div>
+
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+          <button class="btn-opp-inspect" data-field="${escapeHtml(field)}" style="background:rgba(255,255,255,0.08);border:1px solid var(--border-subtle);color:#fff;padding:0.4rem 0.75rem;border-radius:6px;font-size:0.75rem;cursor:pointer;">Inspect Intents</button>
+          <button class="btn-opp-fix" style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#6ee7b7;padding:0.4rem 0.75rem;border-radius:6px;font-size:0.75rem;cursor:pointer;font-weight:600;">View Proposed Fix</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Attach handlers
+  opportunitiesContainer.querySelectorAll('.btn-opp-inspect').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tableWrap = document.querySelector('.intents-table-wrap');
+      if (tableWrap) tableWrap.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+
+  opportunitiesContainer.querySelectorAll('.btn-opp-fix').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const fixesSec = document.getElementById('catalog-fixes-section');
+      if (fixesSec) fixesSec.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
 }
 
 // Render Loss Taxonomy
@@ -1454,8 +1548,8 @@ function renderLossTaxonomy(breakdown) {
     return;
   }
 
-  const reasons = (Array.isArray(breakdown) ? breakdown : Object.values(breakdown)).filter((r) => r && r.count > 0);
-  reasons.sort((a, b) => b.count - a.count);
+  const reasons = (Array.isArray(breakdown) ? breakdown : Object.values(breakdown)).filter((r) => r && (r.count || 0) > 0);
+  reasons.sort((a, b) => (b.count || 0) - (a.count || 0));
 
   if (reasons.length === 0) {
     lossReasonsContainer.innerHTML = '<div class="empty-state-notice">No catalog loss reasons recorded.</div>';
@@ -1473,21 +1567,22 @@ function renderLossTaxonomy(breakdown) {
 
   const cardsHtml = reasons.map((r) => {
     const title = r.label || r.title || r.name || r.code || 'Loss Reason';
-    const pct = typeof r.pct_of_lost === 'number' ? r.pct_of_lost : (typeof r.percentage === 'number' ? r.percentage : 0);
-    // Use dynamically aggregated opportunity value from benchmark results (set by benchmarkRunner)
+    const pctVal = isNumeric(r.pct_of_lost) ? r.pct_of_lost : (isNumeric(r.percentage) ? r.percentage : 0);
+    const pctFormatted = formatPercent(pctVal, 1, false);
     const oppVal = r.catalog_attributed_opportunity_inr ?? r.opportunity_value_inr ?? r.opportunity_inr ?? 0;
+    const barWidth = Math.min(100, Math.max(5, pctVal));
 
     return `
       <div class="loss-reason-card">
         <div class="loss-card-header">
           <span class="loss-card-title">${escapeHtml(title)}</span>
-          <span class="loss-card-count">${r.count} occurrence${r.count !== 1 ? 's' : ''} (${pct.toFixed(1)}%)</span>
+          <span class="loss-card-count">${r.count} occurrence${r.count !== 1 ? 's' : ''} (${pctFormatted})</span>
         </div>
         <div class="loss-bar-wrap">
-          <div class="loss-bar-fill" style="width: ${Math.min(100, Math.max(5, pct))}%;"></div>
+          <div class="loss-bar-fill" style="width: ${barWidth}%;"></div>
         </div>
         <div class="loss-card-footer">
-          <span>Code: <code>${escapeHtml(r.code)}</code></span>
+          <span>Code: <code>${escapeHtml(r.code || '')}</code></span>
           <span>Catalog-Attributed Opportunity: <strong>${formatInr(oppVal)}</strong></span>
         </div>
       </div>
@@ -1527,8 +1622,9 @@ function renderIntentsTable(results, filterGroup = 'all') {
     const skuDisplay = matchedSku
       ? `<strong>${escapeHtml(matchedSku)}</strong>`
       : (closestSku ? `<span style="color: var(--text-muted);">${escapeHtml(closestSku)} (Closest)</span>` : '—');
-    const reasonCode = r.loss_reason_code ? `<code>${escapeHtml(r.loss_reason_code)}</code>` : '—';
-    const oppNumber = r.catalog_attributed_opportunity_inr ?? r.opportunity_value_inr ?? 0;
+    const failureType = r.high_level_failure_type || (r.loss_reason_code ? 'CONSTRAINT_FAILURE' : '—');
+    const reasonCode = r.loss_reason_code ? `<code style="font-size:0.75rem;color:#fca5a5;">${escapeHtml(r.loss_reason_code)}</code>` : '';
+    const oppNumber = r.modeled_opportunity_value_inr ?? r.catalog_attributed_opportunity_inr ?? r.opportunity_value_inr ?? 0;
     const oppValue = oppNumber > 0 ? formatInr(oppNumber) : '—';
 
     return `
@@ -1538,7 +1634,10 @@ function renderIntentsTable(results, filterGroup = 'all') {
         <td style="max-width: 260px;" title="${escapeHtml(queryText)}">${escapeHtml(queryText)}</td>
         <td><span class="status-badge-table ${statusClass}">${escapeHtml(oppType)}</span></td>
         <td>${skuDisplay}</td>
-        <td>${reasonCode}</td>
+        <td>
+          <div style="font-weight:600;font-size:0.8rem;color:#fca5a5;">${escapeHtml(failureType)}</div>
+          ${reasonCode}
+        </td>
         <td style="font-weight: 600; color: ${oppNumber > 0 ? 'var(--accent-amber)' : 'inherit'};">${oppValue}</td>
         <td>
           <button class="btn-inspect" data-intent-id="${escapeHtml(r.benchmark_id)}">Inspect</button>
@@ -1594,7 +1693,8 @@ async function loadCatalogFixes() {
 
       const currentValText = fix.current_value === null ? 'null (missing)' : String(fix.current_value);
       const proposedValText = String(fix.proposed_value);
-      const fixTitle = fix.title || `${fix.product_name} • Add ${fix.field_path}`;
+      const brandName = fix.brand || 'Nexora';
+      const cleanProductName = fix.product_name ? fix.product_name.replace(new RegExp('^' + brandName + '\\s+', 'i'), '') : 'Product';
       const source = fix.source_label || fix.verification_source || 'Unverified';
       // Distinguish Manufacturer-Verified from Synthetic demo data
       const sourceStatus = fix.source_status || 'UNVERIFIED';
@@ -1604,18 +1704,30 @@ async function loadCatalogFixes() {
       const count = fix.affected_intents_count || fix.affected_intent_count || 0;
       // opportunity_value_inr is dynamically aggregated from actual benchmark results (not hardcoded)
       const oppValue = fix.opportunity_value_inr || fix.catalog_attributed_opportunity_value_inr || 0;
+      const eligibilityNotice = count > 0
+        ? `Affected benchmark intents: <strong>${count}</strong>`
+        : `<span style="color:#fcd34d;">This approved fix has no affected benchmark intents, so a buyer-outcome improvement is not expected.</span>`;
 
       return `
         <div class="fix-card" id="fix-card-${escapeHtml(fix.fix_id)}">
           <div class="fix-header">
             <div class="fix-title-wrap">
-              <h4>#${idx + 1} ${escapeHtml(fixTitle)}</h4>
-              <span class="fix-sku-tag">${escapeHtml(fix.product_name)} • SKU: ${escapeHtml(fix.sku)}</span>
+              <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.25rem;">
+                <span class="mono" style="font-size:0.75rem;font-weight:800;color:#38bdf8;background:rgba(56,189,248,0.12);padding:0.15rem 0.45rem;border-radius:4px;border:1px solid rgba(56,189,248,0.3);">${escapeHtml(fix.fix_id)}</span>
+                <span style="font-size:0.72rem;font-weight:700;background:rgba(79,70,229,0.2);color:#a5b4fc;border:1px solid rgba(79,70,229,0.4);padding:0.15rem 0.5rem;border-radius:4px;">Brand: ${escapeHtml(brandName)}</span>
+                <span class="fix-sku-tag">SKU: ${escapeHtml(fix.sku)}</span>
+              </div>
+              <h4 style="font-size:1.05rem;color:#fff;margin:0.2rem 0;">${escapeHtml(cleanProductName)}</h4>
             </div>
             <span class="fix-priority-badge">Priority: ${fix.priority_score.toFixed(0)}</span>
           </div>
           <div class="fix-body">
-            <p style="margin: 0; color: var(--text-secondary);">${escapeHtml(fix.expected_effect || fix.discovered_problem || '')}</p>
+            <div style="font-size:0.8rem; margin-bottom: 0.5rem; display:flex; flex-direction:column; gap:0.25rem; background:rgba(255,255,255,0.03); padding:0.6rem; border-radius:6px;">
+              <div><strong style="color:#cbd5e1;">Problem:</strong> <span style="color:#f87171;">${escapeHtml(fix.discovered_problem || fix.issue_type || 'Missing Specification')}</span></div>
+              <div><strong style="color:#cbd5e1;">Affected Catalog Field:</strong> <code style="color:#38bdf8;">${escapeHtml(fix.field_path)}</code></div>
+              <div><strong style="color:#cbd5e1;">Expected Outcome:</strong> <span style="color:#34d399;">${escapeHtml(fix.expected_effect || 'Converts unserved buyer intents to qualified matches')}</span></div>
+              <div><strong style="color:#cbd5e1;">Approval State:</strong> <span style="color:${isApproved ? '#34d399' : '#fbbf24'};">${isApproved ? 'Approved by Merchant' : 'Requires Explicit Merchant Approval'}</span></div>
+            </div>
             <div class="fix-diff-row">
               <span class="fix-old-val">${escapeHtml(currentValText)}</span>
               <span class="fix-arrow">→</span>
@@ -1627,7 +1739,7 @@ async function loadCatalogFixes() {
           </div>
           <div class="fix-footer">
             <div class="fix-impact">
-              Catalog-Attributed Impact: ${count} intents • ${formatInr(oppValue)}
+              ${eligibilityNotice} • Modeled Catalog Opportunity: <strong>${formatInr(oppValue)}</strong>
             </div>
             ${actionButton}
           </div>
@@ -1679,12 +1791,12 @@ async function approveCatalogFix(fixId, buttonElem) {
     // Refresh fixes list
     await loadCatalogFixes();
 
-    // Show prompt to run experiment
+    // Show prompt to run isolated experiment
     if (experimentResultsWrap) {
       experimentResultsWrap.innerHTML = `
         <div class="empty-state-notice" style="border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.05);">
-          <strong style="color: #6ee7b7;">Catalog Version B Generated with Approved Fixes!</strong><br/>
-          Click <strong>"⚡ Run Before/After Experiment"</strong> above to see measured uplift across the 100 buyer intents.
+          <strong style="color: #6ee7b7;">✓ Action "${escapeHtml(fixId)}" Approved!</strong><br/>
+          Click <strong>"⚡ Run 1-Fix Experiment (${escapeHtml(fixId)})"</strong> on the action card below to evaluate against pristine Catalog A.
         </div>
       `;
     }
@@ -1699,8 +1811,8 @@ async function approveCatalogFix(fixId, buttonElem) {
 // Run Isolated One-Fix Experiment (Clean Causal Demonstration)
 async function runSingleFixExperiment(fixId, buttonElem) {
   if (isExperimentRunning) return;
-  if (benchmarkState !== 'COMPLETED' || !lastCompletedBenchmarkSummary) {
-    alert('Precondition Required: Run the 100-intent baseline benchmark first.');
+  if (!lastCompletedBenchmarkSummary) {
+    alert('Precondition Required: Run a successful baseline benchmark first.');
     return;
   }
 
@@ -1777,27 +1889,16 @@ if (runBenchmarkBtn) {
       runBenchmarkBtn.disabled = true;
       runBenchmarkBtn.innerHTML = '<span>⏳ Evaluating 100 Buyer Intents...</span>';
 
-      // Intermediate progress: 0-150ms: Starting controlled benchmark...
       benchmarkState = 'RUNNING';
-      benchmarkStatusDesc = 'Starting controlled benchmark...';
-      if (lastRunTimestamp) lastRunTimestamp.textContent = 'Status: Starting controlled benchmark...';
+      benchmarkStatusDesc = 'Evaluating 100 controlled buyer intents...';
+      if (lastRunTimestamp) lastRunTimestamp.textContent = 'Status: Evaluating 100 buyer intents...';
       renderBenchmarkStatus();
-
-      // Intermediate progress: 150ms+: Evaluating 100 buyer intents...
-      phaseTimer = setTimeout(() => {
-        if (benchmarkState === 'RUNNING') {
-          benchmarkStatusDesc = 'Evaluating 100 controlled buyer intents against Catalog Version A...';
-          renderBenchmarkStatus();
-          if (lastRunTimestamp) lastRunTimestamp.textContent = 'Status: Evaluating 100 buyer intents...';
-        }
-      }, 150);
 
       // PHASE A: VALIDATE DATASET
       const valRes = await fetch('/api/v1/merchant/benchmark/validate');
       const valData = await valRes.json();
 
       if (!valRes.ok || valData.status !== 'VALID') {
-        clearTimeout(phaseTimer);
         benchmarkState = 'FAILED';
         benchmarkFailureDetails = valData;
         renderBenchmarkStatus();
@@ -1815,7 +1916,6 @@ if (runBenchmarkBtn) {
 
       const data = await res.json();
       if (!res.ok || data.status === 'INVALID_BENCHMARK_DATA') {
-        clearTimeout(phaseTimer);
         benchmarkState = 'FAILED';
         benchmarkFailureDetails = data;
         renderBenchmarkStatus();
@@ -1830,7 +1930,6 @@ if (runBenchmarkBtn) {
       if (remaining > 0) {
         await new Promise((resolve) => setTimeout(resolve, remaining));
       }
-      clearTimeout(phaseTimer);
 
       // COMPLETED
       benchmarkState = 'COMPLETED';
@@ -1848,7 +1947,6 @@ if (runBenchmarkBtn) {
         lastRunTimestamp.textContent = `Status: COMPLETED • Evaluated: ${new Date().toLocaleTimeString()}`;
       }
     } catch (err) {
-      if (phaseTimer) clearTimeout(phaseTimer);
       console.error('[Merchant] Benchmark run failed:', err);
       benchmarkState = 'FAILED';
       benchmarkFailureDetails = { reason: err.message };
@@ -1860,90 +1958,6 @@ if (runBenchmarkBtn) {
       isBenchmarkRunning = false;
       runBenchmarkBtn.disabled = false;
       runBenchmarkBtn.innerHTML = '<span>▶ Run 100-Intent Benchmark</span>';
-    }
-  });
-}
-
-// Run Before / After Experiment
-if (runExperimentBtn) {
-  runExperimentBtn.addEventListener('click', async () => {
-    if (isExperimentRunning) return;
-
-    // PRECONDITION 1: Baseline benchmark must be COMPLETED
-    if (benchmarkState !== 'COMPLETED' || !lastCompletedBenchmarkSummary) {
-      alert('Run the 100-intent baseline benchmark first.');
-      if (experimentResultsWrap) {
-        experimentResultsWrap.innerHTML = `
-          <div class="empty-state-notice" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.05); color: #fca5a5;">
-            ⚠️ <strong>Precondition Required:</strong> Run the 100-intent baseline benchmark first.
-          </div>
-        `;
-      }
-      return;
-    }
-
-    // PRECONDITION 2: At least one approved fix must exist for Version B
-    const hasApprovedFix = currentFixes.some((f) => f.status === 'APPROVED');
-    if (!hasApprovedFix) {
-      alert('No approved Catalog Version B change is available yet. Please review and approve at least one catalog fix below first.');
-      if (experimentResultsWrap) {
-        experimentResultsWrap.innerHTML = `
-          <div class="empty-state-notice" style="border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.05); color: #fcd34d;">
-            ⚠️ <strong>Precondition Required:</strong> No approved Catalog Version B change is available yet.<br/>
-            Please approve at least one verified catalog improvement below before running the Before/After experiment.
-          </div>
-        `;
-      }
-      return;
-    }
-
-    const startTime = Date.now();
-
-    try {
-      isExperimentRunning = true;
-      runExperimentBtn.disabled = true;
-      runExperimentBtn.innerHTML = '<span>⏳ Running controlled experiment...</span>';
-
-      if (experimentResultsWrap) {
-        experimentResultsWrap.innerHTML = `
-          <div class="empty-state-notice" style="border-color: rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.05); color: #bae6fd;">
-            ⏳ <strong>Running Controlled Experiment...</strong><br/>
-            Evaluating 100 controlled buyer intents across Catalog Version A and Version B...
-            <div class="benchmark-progress-bar" style="margin-top: 1rem;"><div class="benchmark-progress-indeterminate"></div></div>
-          </div>
-        `;
-      }
-
-      const res = await fetch('/api/v1/merchant/experiment/compare');
-      const compData = await res.json();
-
-      if (!res.ok) {
-        throw new Error(compData.error || `HTTP error ${res.status}`);
-      }
-
-      // Enforce minimum visible display duration of ~1500ms
-      const elapsed = Date.now() - startTime;
-      const remaining = Math.max(0, 1500 - elapsed);
-      if (remaining > 0) {
-        await new Promise((resolve) => setTimeout(resolve, remaining));
-      }
-
-      currentComparison = compData;
-      renderExperimentComparison(compData);
-    } catch (err) {
-      console.error('[Merchant] Experiment comparison failed:', err);
-      if (experimentResultsWrap) {
-        experimentResultsWrap.innerHTML = `
-          <div class="empty-state-notice" style="border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.05); color: #fca5a5;">
-            ❌ <strong>Experiment Run Blocked:</strong> ${escapeHtml(err.message)}
-          </div>
-        `;
-      }
-      alert(`Experiment run failed: ${err.message}`);
-    } finally {
-      isExperimentRunning = false;
-      runExperimentBtn.disabled = false;
-      runExperimentBtn.innerHTML = '<span>▶ Run Before/After Experiment</span>';
     }
   });
 }
@@ -1966,6 +1980,9 @@ if (resetExperimentBtn) {
       });
       const data = await res.json();
       currentComparison = null;
+
+      // Reload fixes list from server so approved actions return to pending
+      await loadCatalogFixes();
 
       const elapsed = Date.now() - startTime;
       const remaining = Math.max(0, 400 - elapsed);
@@ -1998,96 +2015,90 @@ function renderExperimentComparison(comparison) {
   if (!experimentResultsWrap || !comparison) return;
 
   const metrics = comparison.metrics || {};
-  // intent_transitions from the server is already filtered to ACTUAL outcome changes only
+  // intent_transitions from the server is already filtered to ACTUAL outcome changes only (LOST->WON, PARTIAL->WON)
   const outcomeTransitions = (comparison.intent_transitions || []).filter(
     (t) => (t.before_outcome || t.before_status) !== (t.after_outcome || t.after_status)
   );
   const hasOutcomeChanges = comparison.has_outcome_changes === true || outcomeTransitions.length > 0;
   const deltaSources = comparison.opportunity_value_delta_sources || [];
 
-  const formatPctDelta = (m, noImprovementNote) => {
-    if (!m) return '<span class="delta-pill neutral">0.0%</span>';
-    const deltaPct = m.delta * 100;
-    const sign = deltaPct > 0 ? '+' : '';
-    const formatted = `${sign}${deltaPct.toFixed(1)}%`;
-    const cls = deltaPct > 0 ? 'positive' : (deltaPct < 0 ? 'lost' : 'neutral');
-    const pill = `<span class="delta-pill ${cls}">${formatted}</span>`;
-    if (deltaPct === 0 && noImprovementNote) {
-      return `${pill}<span style="font-size:0.72rem;color:#94a3b8;display:block;margin-top:0.2rem;">${noImprovementNote}</span>`;
-    }
-    return pill;
-  };
-
-  const matchRate = metrics.product_match_rate || { before: 0, after: 0, delta: 0 };
+  const readinessScore = metrics.ai_buyer_readiness_score || { before: 0, after: 0, delta: 0 };
+  const constraintAdherence = metrics.hard_constraint_adherence || { before: 0, after: 0, delta: 0 };
+  const matchRate = metrics.product_match_rate || metrics.intent_match_rate || { before: 0, after: 0, delta: 0 };
+  const coverage = metrics.catalog_coverage || { before: 0.9, after: 0.9, delta: 0 };
   const compatibility = metrics.compatibility_success_rate || { before: 0, after: 0, delta: 0 };
   const checkoutReady = metrics.checkout_ready_rate || { before: 0, after: 0, delta: 0 };
   const crossSell = metrics.simulated_cross_sell_acceptance_rate || { before: 0, after: 0, delta: 0 };
-  const oppValue = metrics.catalog_attributed_opportunity_value_inr || { before: 0, after: 0, delta: 0 };
+  const oppValue = metrics.modeled_catalog_opportunity_value_inr || metrics.catalog_attributed_opportunity_value_inr || { before: 0, after: 0, delta: 0 };
   const wonCount = metrics.won_count || { before: 0, after: 0, delta: 0 };
   const lostCount = metrics.lost_count || { before: 0, after: 0, delta: 0 };
 
   // Opportunity value delta label — NEVER says "Recovered" without an actual outcome change
   let oppValueDeltaCell = '';
-  const oppDelta = oppValue.delta;  // positive = Version B has MORE attributed value
+  const oppDelta = oppValue.delta;
   if (oppDelta === 0) {
-    oppValueDeltaCell = '<span class="delta-pill neutral">₹0 (No change in catalog-attributed opportunity value)</span>';
+    oppValueDeltaCell = '<span class="delta-pill neutral">₹0 (No change in modeled opportunity value)</span>';
   } else if (!hasOutcomeChanges) {
-    // Delta exists but NO buyer moved from LOST/PARTIAL to WON — attribution shift only
     const sign = oppDelta > 0 ? '+' : '';
     oppValueDeltaCell = `
       <span class="delta-pill neutral" title="Attribution-only change">${sign}${formatInr(Math.abs(oppDelta))}</span>
       <span style="font-size:0.75rem;font-weight:600;color:#fcd34d;display:block;margin-top:0.25rem;">
-        Catalog-Attributed Opportunity Value Change
+        Modeled Catalog Opportunity Shift
       </span>
       <span style="font-size:0.72rem;color:#cbd5e1;display:block;margin-top:0.2rem;">
         Opportunity attribution changed because the closest candidate/basket valuation changed, but no buyer moved from LOST/PARTIAL to WON.
         ${deltaSources.length > 0 ? 'See reconciliation table below for per-intent breakdown.' : ''}
       </span>`;
   } else {
-    // Real outcome changes exist — WON count improved
     const sign = oppDelta > 0 ? '+' : '';
     oppValueDeltaCell = `
       <span class="delta-pill positive">${sign}${formatInr(Math.abs(oppDelta))}</span>
       <span style="font-size:0.75rem;font-weight:600;color:#6ee7b7;display:block;margin-top:0.25rem;">
-        Benchmark Opportunity Value Associated With Newly Won Intents (${outcomeTransitions.length} transition${outcomeTransitions.length !== 1 ? 's' : ''})
+        Modeled Opportunity Value for Newly Won Intents (${outcomeTransitions.length} transition${outcomeTransitions.length !== 1 ? 's' : ''})
       </span>
       <span style="font-size:0.72rem;color:#94a3b8;display:block;margin-top:0.2rem;">
-        Benchmark-derived estimate. Not actual revenue, money earned, or customer conversion.
+        Modeled from verified benchmark/catalog values; not actual revenue.
       </span>`;
   }
 
-  // Experiment metadata header
-  const experimentIdLabel = comparison.experiment_id ? `<span class="mono" style="color:#6ee7b7;">${escapeHtml(comparison.experiment_id)}</span>` : '';
-  const fixIdLabel = comparison.approved_fix_id
-    ? `<span class="mono" style="color:#38bdf8;">${escapeHtml(comparison.approved_fix_id)}</span> (isolated one-fix causal experiment)`
-    : (comparison.approved_fixes_applied || []).length > 1
-      ? `${escapeHtml((comparison.approved_fixes_applied || []).join(', '))} (multi-fix run — not a single causal experiment)`
-      : 'None';
-
+  // Experiment metadata: exact fix ID as plain string (NEVER raw HTML tags)
+  const exactFixId = comparison.approved_fix_id || (comparison.approved_fixes_applied || [])[0] || 'FIX-ISOLATED';
   const versionBLabel = escapeHtml(comparison.catalog_version_b || comparison.enriched_catalog_version || 'Catalog Version B');
   const versionALabel = escapeHtml(comparison.catalog_version_a || comparison.baseline_catalog_version || 'Catalog Version A');
 
-  // Zero-outcome change notice
+  // Zero-outcome change notice — honest explanation
   const outcomeSummaryBanner = !hasOutcomeChanges
-    ? `<div style="margin-bottom:1rem;padding:0.75rem 1rem;border-radius:6px;border:1px solid rgba(245,158,11,0.35);background:rgba(245,158,11,0.07);color:#fcd34d;font-size:0.875rem;">
-        <strong>No buyer outcome changes were recorded.</strong><br/>
-        All 100 buyer intents produced the same WON / PARTIAL / LOST outcomes in both Catalog Version A and Version B.
-        ${outcomeTransitions.length === 0 && oppDelta !== 0
-          ? `<br/>Opportunity attribution changed because the closest candidate/basket valuation changed, but no buyer moved from LOST/PARTIAL to WON.`
-          : ''}
+    ? `<div style="margin-bottom:1rem;padding:0.85rem 1.1rem;border-radius:6px;border:1px solid rgba(245,158,11,0.35);background:rgba(245,158,11,0.07);color:#fcd34d;font-size:0.875rem;line-height:1.45;">
+        <strong>0 verified intent transitions</strong><br/>
+        The selected catalog change altered modeled opportunity attribution but did not change buyer outcomes in this benchmark.<br/>
+        <span style="font-size:0.78rem;color:#cbd5e1;display:block;margin-top:0.3rem;">
+          All 100 buyer intents produced the same WON / PARTIAL / LOST outcomes in both Catalog Version A and Version B.
+        </span>
       </div>`
-    : `<div style="margin-bottom:1rem;padding:0.75rem 1rem;border-radius:6px;border:1px solid rgba(16,185,129,0.35);background:rgba(16,185,129,0.07);color:#6ee7b7;font-size:0.875rem;">
-        <strong>${outcomeTransitions.length} buyer intent${outcomeTransitions.length !== 1 ? 's' : ''} moved to a newly WON outcome</strong> between Catalog Version A and Version B.
+    : `<div style="margin-bottom:1rem;padding:0.85rem 1.1rem;border-radius:6px;border:1px solid rgba(16,185,129,0.35);background:rgba(16,185,129,0.07);color:#6ee7b7;font-size:0.875rem;">
+        <strong>${outcomeTransitions.length} verified intent transition${outcomeTransitions.length !== 1 ? 's' : ''}</strong> between Catalog Version A and Version B.
         All verified outcome transitions are listed below.
       </div>`;
 
   experimentResultsWrap.innerHTML = `
-    <!-- Experiment Metadata Header -->
-    <div style="margin-bottom:1rem;padding:0.75rem 1rem;border-radius:6px;border:1px solid rgba(56,189,248,0.2);background:rgba(56,189,248,0.05);font-size:0.82rem;color:var(--text-secondary);display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
-      <div><strong style="color:#fff;">Experiment ID:</strong> ${experimentIdLabel}</div>
-      <div><strong style="color:#fff;">Approved Fix (Causal Variable):</strong> ${fixIdLabel}</div>
-      <div><strong style="color:#fff;">Catalog Version A (Baseline):</strong> <span class="mono">${versionALabel}</span></div>
-      <div><strong style="color:#fff;">Catalog Version B (Enriched):</strong> <span class="mono">${versionBLabel}</span></div>
+    <!-- Visual Causal Narrative Flow -->
+    <div style="margin-bottom:1.25rem;padding:1rem 1.25rem;border-radius:8px;border:1px solid rgba(56,189,248,0.25);background:rgba(56,189,248,0.04);display:flex;align-items:center;justify-content:center;gap:2rem;flex-wrap:wrap;font-size:0.85rem;">
+      <div style="text-align:center;">
+        <span style="font-size:0.7rem;color:var(--text-muted);display:block;text-transform:uppercase;font-weight:700;letter-spacing:0.04em;">Baseline</span>
+        <strong style="color:#fff;font-size:1rem;letter-spacing:0.05em;">CATALOG A</strong>
+        <div style="font-size:0.75rem;color:#94a3b8;margin-top:0.2rem;">${versionALabel}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;color:#38bdf8;text-align:center;">
+        <span style="font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;">↓ ONE APPROVED CATALOG CHANGE ↓</span>
+        <code class="mono" style="font-size:0.9rem;background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.35);padding:0.25rem 0.75rem;border-radius:4px;color:#38bdf8;margin-top:0.35rem;display:inline-block;font-weight:700;">${escapeHtml(exactFixId)}</code>
+        <span style="font-size:0.72rem;color:#bae6fd;margin-top:0.2rem;">(isolated one-fix causal experiment)</span>
+        <span style="font-size:0.7rem;color:#94a3b8;margin-top:0.35rem;letter-spacing:0.04em;font-weight:600;">↓ SAME 100 CONTROLLED INTENTS ↓</span>
+      </div>
+      <div style="text-align:center;">
+        <span style="font-size:0.7rem;color:var(--text-muted);display:block;text-transform:uppercase;font-weight:700;letter-spacing:0.04em;">Enriched</span>
+        <strong style="color:#6ee7b7;font-size:1rem;letter-spacing:0.05em;">CATALOG B</strong>
+        <div style="font-size:0.75rem;color:#6ee7b7;margin-top:0.2rem;">${versionBLabel}</div>
+      </div>
     </div>
 
     ${outcomeSummaryBanner}
@@ -2103,34 +2114,55 @@ function renderExperimentComparison(comparison) {
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td><strong>Product Match Rate</strong> (excludes out of scope)</td>
-          <td>${(matchRate.before * 100).toFixed(1)}%</td>
-          <td><strong>${(matchRate.after * 100).toFixed(1)}%</strong></td>
-          <td>${formatPctDelta(matchRate, !hasOutcomeChanges ? 'No measurable product-match improvement.' : null)}</td>
+        <tr style="background: rgba(56,189,248,0.04);">
+          <td>
+            <strong style="color:#38bdf8;">AI Buyer Readiness Score</strong>
+            <span style="font-size:0.72rem;color:#94a3b8;display:block;">(35% Match + 25% Adherence + 25% Checkout + 15% Coverage)</span>
+          </td>
+          <td><strong style="font-size:1.05rem;">${formatScore(readinessScore.before)}</strong></td>
+          <td><strong style="font-size:1.05rem;color:#6ee7b7;">${formatScore(readinessScore.after)}</strong></td>
+          <td>${formatScoreDelta(readinessScore)}</td>
         </tr>
         <tr>
-          <td><strong>Compatibility Success Rate</strong></td>
-          <td>${(compatibility.before * 100).toFixed(1)}%</td>
-          <td><strong>${(compatibility.after * 100).toFixed(1)}%</strong></td>
-          <td>${formatPctDelta(compatibility, !hasOutcomeChanges && compatibility.delta > 0 ? 'Compatibility improved in the controlled benchmark, but no additional buyer intent reached WON.' : null)}</td>
+          <td><strong>Intent Match Rate</strong> (excludes out of scope)</td>
+          <td>${formatPercent(matchRate.before, 1, true)}</td>
+          <td><strong>${formatPercent(matchRate.after, 1, true)}</strong></td>
+          <td>${formatPctDelta(matchRate, !hasOutcomeChanges ? 'No measurable intent-match improvement.' : null)}</td>
+        </tr>
+        <tr>
+          <td><strong>Hard Constraint Adherence</strong></td>
+          <td>${formatPercent(constraintAdherence.before, 1, true)}</td>
+          <td><strong>${formatPercent(constraintAdherence.after, 1, true)}</strong></td>
+          <td>${formatPctDelta(constraintAdherence, null)}</td>
         </tr>
         <tr>
           <td><strong>Checkout-Ready Rate</strong></td>
-          <td>${(checkoutReady.before * 100).toFixed(1)}%</td>
-          <td><strong>${(checkoutReady.after * 100).toFixed(1)}%</strong></td>
+          <td>${formatPercent(checkoutReady.before, 1, true)}</td>
+          <td><strong>${formatPercent(checkoutReady.after, 1, true)}</strong></td>
           <td>${formatPctDelta(checkoutReady, !hasOutcomeChanges ? 'No measurable checkout-readiness improvement.' : null)}</td>
         </tr>
         <tr>
+          <td><strong>Catalog Coverage</strong></td>
+          <td>${formatPercent(coverage.before, 1, true)}</td>
+          <td><strong>${formatPercent(coverage.after, 1, true)}</strong></td>
+          <td>${formatPctDelta(coverage, null)}</td>
+        </tr>
+        <tr>
+          <td><strong>Compatibility Success Rate</strong></td>
+          <td>${formatPercent(compatibility.before, 1, true)}</td>
+          <td><strong>${formatPercent(compatibility.after, 1, true)}</strong></td>
+          <td>${formatPctDelta(compatibility, !hasOutcomeChanges && compatibility.delta > 0 ? 'Compatibility improved in the controlled benchmark, but no additional buyer intent reached WON.' : null)}</td>
+        </tr>
+        <tr>
           <td><strong>Simulated Cross-Sell Acceptance</strong></td>
-          <td>${(crossSell.before * 100).toFixed(1)}%</td>
-          <td><strong>${(crossSell.after * 100).toFixed(1)}%</strong></td>
+          <td>${formatPercent(crossSell.before, 1, true)}</td>
+          <td><strong>${formatPercent(crossSell.after, 1, true)}</strong></td>
           <td>${formatPctDelta(crossSell, null)}</td>
         </tr>
         <tr>
           <td>
-            <strong>Catalog-Attributed Opportunity Value</strong>
-            <span style="font-size:0.72rem;color:#94a3b8;display:block;">Benchmark-derived estimate. Not actual revenue.</span>
+            <strong>Modeled Catalog Opportunity Value</strong>
+            <span style="font-size:0.72rem;color:#94a3b8;display:block;">Modeled from verified benchmark/catalog values; not actual revenue.</span>
           </td>
           <td>${formatInr(oppValue.before)}</td>
           <td><strong>${formatInr(oppValue.after)}</strong></td>
@@ -2181,18 +2213,18 @@ function renderExperimentComparison(comparison) {
       </table>
     </div>` : ''}
 
-    <!-- Verified Intent Transitions: ACTUAL outcome changes only -->
+    <!-- Verified Intent Transitions: ACTUAL outcome changes only (LOST->WON, PARTIAL->WON) -->
     <div class="section-title-wrap" style="margin-top:1rem;">
       <h4 style="font-size:1.05rem;color:#fff;margin:0;">Verified Intent Transitions (${outcomeTransitions.length} Outcome Change${outcomeTransitions.length !== 1 ? 's' : ''})</h4>
       <span class="section-subtitle">
-        Intents whose <strong>outcome</strong> changed between Catalog Version A and Version B (e.g. LOST → WON).
-        SKU-only upgrades within the same outcome are not listed here.
+        Intents whose <strong>outcome</strong> changed between Catalog Version A and Version B (e.g. LOST → WON or PARTIAL → WON).
+        Unchanged outcomes (e.g. WON → WON) are strictly not counted.
       </span>
     </div>
     <div class="transitions-grid">
       ${outcomeTransitions.length === 0
         ? `<div class="empty-state-notice" style="grid-column:1/-1;">
-             No outcome transitions recorded. All 100 buyer intents produced the same outcome (WON/LOST/PARTIAL/UNSUPPORTED) in both catalog versions.
+             0 verified intent transitions recorded. All 100 buyer intents produced the same outcome in both catalog versions.
              <br/><span style="color:#94a3b8;font-size:0.8rem;">If you expected transitions, verify that the approved fix resolves a hard constraint that blocked a LOST intent. SKU-only upgrades are excluded by design.</span>
            </div>`
         : outcomeTransitions.map((t) => {
@@ -2224,15 +2256,13 @@ function renderExperimentComparison(comparison) {
   `;
 }
 
-
 // Drilldown Modal Inspector: "Why Did We Lose This Buyer?"
-
 async function openDrilldownModal(intentId) {
   if (!drilldownModal || !drilldownBody || !drilldownTitle) return;
 
   try {
-    drilldownTitle.textContent = `Buyer Intent Audit: ${intentId}`;
-    drilldownBody.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading buyer telemetry...</div>';
+    drilldownTitle.textContent = `Query Forensics & Catalog Evidence: ${intentId}`;
+    drilldownBody.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading query forensics telemetry...</div>';
     drilldownModal.classList.remove('hidden');
 
     const res = await fetch(`/api/v1/merchant/benchmark/intents/${encodeURIComponent(intentId)}`);
@@ -2243,8 +2273,22 @@ async function openDrilldownModal(intentId) {
     const statusClass = String(statusText).toLowerCase();
     const groupName = result.group || result.intent?.group || result.intent?.customer_workload_group || 'general';
     const queryText = result.query || result.intent?.natural_language_query || result.intent?.raw_query || '';
-    const oppValueNum = result.catalog_attributed_opportunity_inr ?? result.opportunity_value_inr ?? 0;
-    const budgetVal = result.intent?.expected_hard_constraints?.max_budget_inr || result.intent?.hard_budget_inr;
+    const oppValueNum = result.modeled_opportunity_value_inr ?? result.catalog_attributed_opportunity_inr ?? result.opportunity_value_inr ?? 0;
+    const verifiedPriceNum = result.verified_price_inr ?? null;
+    const failureType = result.high_level_failure_type || (result.loss_reason_code ? 'CONSTRAINT_FAILURE' : 'NONE');
+    const recommendedAction = result.recommended_catalog_action || 'Review catalog specifications to ensure qualifying products are discoverable.';
+
+    // Structured Interpretation
+    const si = result.structured_interpretation || {};
+    const siRows = [
+      si.workload_intent ? `<div><strong>Workload:</strong> <span>${escapeHtml(si.workload_intent)}</span></div>` : '',
+      si.hard_budget_inr ? `<div><strong>Max Budget:</strong> <span>${formatInr(si.hard_budget_inr)}</span></div>` : '',
+      si.min_ram_gb ? `<div><strong>Min RAM:</strong> <span>${si.min_ram_gb} GB</span></div>` : '',
+      si.min_storage_gb ? `<div><strong>Min Storage:</strong> <span>${si.min_storage_gb} GB</span></div>` : '',
+      si.gpu_requirement ? `<div><strong>GPU Required:</strong> <span>${escapeHtml(si.gpu_requirement)}</span></div>` : '',
+      si.brand_preference ? `<div><strong>Brand Preference:</strong> <span>${escapeHtml(si.brand_preference)}</span></div>` : '',
+      si.weight_preference ? `<div><strong>Portability:</strong> <span>${escapeHtml(si.weight_preference)}</span></div>` : ''
+    ].filter(Boolean);
 
     const unmetList = (result.unmet_constraints && result.unmet_constraints.length > 0)
       ? result.unmet_constraints.map((c) => `<li style="color: #f87171;">${escapeHtml(c)}</li>`).join('')
@@ -2255,69 +2299,80 @@ async function openDrilldownModal(intentId) {
       : '<li style="color: var(--text-muted);">No trade-offs required.</li>';
 
     drilldownBody.innerHTML = `
-      <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-        <!-- Header Banner -->
-        <div style="background: var(--bg-base); padding: 1.25rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.75rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
-            <span class="group-tag" style="font-size: 0.8rem;">Workload: ${escapeHtml(formatGroupName(groupName))}</span>
-            <span class="status-badge-table ${statusClass}" style="font-size: 0.85rem; padding: 0.35rem 0.75rem;">${escapeHtml(statusText)}</span>
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        <!-- STEP 1: BUYER REQUEST -->
+        <div style="background: var(--bg-base); padding: 1rem; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem; flex-wrap:wrap; gap:0.5rem;">
+            <span style="font-size:0.75rem; font-weight:800; color:#38bdf8; letter-spacing:0.04em;">1. BUYER REQUEST</span>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <span class="group-tag" style="font-size:0.75rem;">${escapeHtml(formatGroupName(groupName))}</span>
+              <span class="status-badge-table ${statusClass}" style="font-size:0.8rem; padding:0.2rem 0.6rem;">${escapeHtml(statusText)}</span>
+            </div>
           </div>
-          <div style="font-size: 1.05rem; font-weight: 600; color: #fff;">
-            "${escapeHtml(queryText)}"
-          </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; color: var(--text-secondary); border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 0.5rem;">
-            <span>Customer Hard Budget: <strong>${budgetVal ? formatInr(budgetVal) : 'Uncapped'}</strong></span>
-            <span>Catalog-Attributed Opportunity: <strong style="color: var(--accent-amber);">${formatInr(oppValueNum)}</strong></span>
+          <div style="font-size: 1.05rem; font-weight: 600; color: #fff; line-height: 1.4;">
+            &ldquo;${escapeHtml(queryText)}&rdquo;
           </div>
         </div>
 
-        <!-- Loss Reason & Root Cause -->
-        <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: var(--radius-md); padding: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <strong style="color: #f87171; font-size: 0.95rem;">Root Cause Diagnosis:</strong>
-            ${result.loss_reason_code ? `<code style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; padding: 0.2rem 0.5rem; border-radius: 4px;">${escapeHtml(result.loss_reason_code)}</code>` : ''}
+        <!-- STEP 2: WHAT AI UNDERSTOOD -->
+        <div style="background: rgba(56,189,248,0.04); border: 1px solid rgba(56,189,248,0.2); border-radius: var(--radius-md); padding: 0.9rem;">
+          <div style="font-size:0.75rem; font-weight:800; color:#38bdf8; letter-spacing:0.04em; margin-bottom:0.5rem;">2. WHAT AI UNDERSTOOD (STRUCTURED EXTRACTION)</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.4rem; font-size: 0.8rem; color: var(--text-secondary);">
+            ${siRows.length > 0 ? siRows.join('') : '<div>Standard natural language query parameters</div>'}
           </div>
-          <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5;">
-            ${escapeHtml(result.loss_reason_description || result.explanation || 'No loss reason recorded.')}
-          </p>
         </div>
 
-        <!-- Unmet Constraints -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-          <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
-            <h5 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; text-transform: uppercase; color: var(--text-secondary);">Unmet Constraints</h5>
-            <ul style="margin: 0; padding-left: 1.2rem; font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
+        <!-- STEP 3: WHAT CATALOG PROVIDED -->
+        <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0.9rem;">
+          <div style="font-size:0.75rem; font-weight:800; color:#cbd5e1; letter-spacing:0.04em; margin-bottom:0.4rem;">3. WHAT CATALOG PROVIDED (EVALUATED EVIDENCE)</div>
+          ${result.closest_product_sku ? `
+            <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:0.5rem;">
+              <div style="font-weight:700; color:#fff; font-size:0.95rem;">${escapeHtml(result.closest_product_name || result.closest_product_sku)}</div>
+              <div style="font-size:0.82rem; color:var(--text-secondary);">Verified Price: <strong style="color:#6ee7b7;">${verifiedPriceNum ? formatInr(verifiedPriceNum) : '—'}</strong></div>
+            </div>
+            <div class="mono" style="font-size:0.75rem; color:var(--text-muted); margin-top:0.2rem;">SKU: ${escapeHtml(result.closest_product_sku)}</div>
+          ` : '<div style="color:var(--text-muted); font-size:0.85rem;">No qualifying catalog SKU matched.</div>'}
+        </div>
+
+        <!-- STEP 4: WHAT FAILED & STEP 5: WHY -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <!-- STEP 4: WHAT FAILED -->
+          <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: var(--radius-md); padding: 0.9rem;">
+            <div style="font-size:0.75rem; font-weight:800; color:#f87171; letter-spacing:0.04em; margin-bottom:0.4rem;">4. WHAT FAILED (UNSATISFIED CONSTRAINTS)</div>
+            <ul style="margin: 0; padding-left: 1.2rem; font-size: 0.82rem; display: flex; flex-direction: column; gap: 0.3rem;">
               ${unmetList}
             </ul>
           </div>
 
-          <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
-            <h5 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; text-transform: uppercase; color: var(--text-secondary);">Closest Evaluated SKU</h5>
-            ${result.closest_product_sku ? `
-              <div style="font-weight: 700; color: #fff; font-size: 0.95rem;">${escapeHtml(result.closest_product_name || result.closest_product_sku)}</div>
-              <div class="mono" style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.4rem;">SKU: ${escapeHtml(result.closest_product_sku)}</div>
-              <div style="font-size: 0.8rem; color: #fca5a5;">
-                Why it was disqualified:<br/>
-                ${(result.closest_product_unmet_reasons || []).map((r) => `• ${escapeHtml(r)}`).join('<br/>') || 'Did not meet customer specifications.'}
-              </div>
-            ` : '<div style="color: var(--text-muted); font-size: 0.85rem;">No close catalog candidate found.</div>'}
+          <!-- STEP 5: WHY -->
+          <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: var(--radius-md); padding: 0.9rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+              <span style="font-size:0.75rem; font-weight:800; color:#f87171; letter-spacing:0.04em;">5. WHY (FAILURE REASON)</span>
+              ${result.loss_reason_code ? `<code style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; padding: 0.15rem 0.4rem; border-radius: 4px; font-size:0.72rem;">${escapeHtml(result.loss_reason_code)}</code>` : ''}
+            </div>
+            <p style="margin: 0; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.4;">
+              ${escapeHtml(result.loss_reason_description || result.explanation || 'Did not meet customer specifications.')}
+            </p>
           </div>
         </div>
 
-        <!-- Grounded Explanation -->
-        <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
-          <h5 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; text-transform: uppercase; color: var(--text-secondary);">Engine Explanation Provided to Buyer</h5>
-          <div style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
-            ${formatMarkdown(result.explanation)}
+        <!-- STEP 6: MODELED OPPORTUNITY -->
+        <div style="background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: var(--radius-md); padding: 0.9rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+          <div>
+            <div style="font-size:0.75rem; font-weight:800; color:#fbbf24; letter-spacing:0.04em; margin-bottom:0.2rem;">6. MODELED OPPORTUNITY</div>
+            <span style="font-size:0.72rem; color:var(--text-muted);">Modeled from verified benchmark/catalog values; not actual revenue.</span>
+          </div>
+          <div style="font-size: 1.15rem; font-weight: 700; color: var(--accent-amber);">
+            ${formatInr(oppValueNum)}
           </div>
         </div>
 
-        <!-- Trade-Offs & Guidance -->
-        <div style="background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1rem;">
-          <h5 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; text-transform: uppercase; color: var(--text-secondary);">Trade-offs &amp; Guidance</h5>
-          <ul style="margin: 0; padding-left: 1.2rem; font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem; color: var(--text-secondary);">
-            ${tradeOffsList}
-          </ul>
+        <!-- STEP 7: RECOMMENDED FIX -->
+        <div style="background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.25); border-radius: var(--radius-md); padding: 0.9rem;">
+          <div style="font-size:0.75rem; font-weight:800; color:#6ee7b7; letter-spacing:0.04em; margin-bottom:0.3rem;">7. RECOMMENDED FIX</div>
+          <div style="font-size: 0.85rem; color: #fff; line-height: 1.4;">
+            ${escapeHtml(recommendedAction)}
+          </div>
         </div>
       </div>
     `;

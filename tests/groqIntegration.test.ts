@@ -1,4 +1,4 @@
-﻿import { describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { GroqLLMProvider, getLLMProvider } from '../src/llm/llmProvider.ts';
 import { InMemoryCatalogRepository } from '../src/repository/catalogRepository.ts';
@@ -54,4 +54,52 @@ describe('Groq LLM Provider Integration (openai/gpt-oss-120b)', () => {
     assert.ok(explanation, 'Expected explanation string');
     assert.ok(explanation.length > 20, 'Explanation should be descriptive');
   });
+
+  it('5. Live Groq extracts Apple brand and orchestrator returns Apple laptop', async (t) => {
+    if (!process.env.GROQ_API_KEY) {
+      t.skip('Skipping live Groq API test: GROQ_API_KEY not configured');
+      return;
+    }
+
+    const repo = new InMemoryCatalogRepository();
+    const provider = new GroqLLMProvider();
+    const { getSessionManager } = await import('../src/session/sessionManager.ts');
+    const { AgentOrchestrator } = await import('../src/agent/agentOrchestrator.ts');
+    const sessionManager = getSessionManager(repo);
+    const orchestrator = new AgentOrchestrator(provider, repo, sessionManager);
+
+    const res = await orchestrator.processMessage('I want an Apple laptop for coding under 90000', `live_groq_apple_${Date.now()}`);
+    assert.ok(res.recommendation?.recommended_laptop, 'Expected recommended laptop');
+    const brand = res.recommendation.recommended_laptop.product.brand;
+    assert.equal(brand.toLowerCase(), 'apple');
+    assert.notEqual(brand.toLowerCase(), 'nexora');
+    assert.ok(res.recommendation.total_price_inr <= 90000);
+  });
+
+  it('6. Live Groq resolves conversational reference ("that") using conversation context', async (t) => {
+    if (!process.env.GROQ_API_KEY) {
+      t.skip('Skipping live Groq API test: GROQ_API_KEY not configured');
+      return;
+    }
+
+    const repo = new InMemoryCatalogRepository();
+    const provider = new GroqLLMProvider();
+    const { getSessionManager } = await import('../src/session/sessionManager.ts');
+    const { AgentOrchestrator } = await import('../src/agent/agentOrchestrator.ts');
+    const sessionManager = getSessionManager(repo);
+    const orchestrator = new AgentOrchestrator(provider, repo, sessionManager);
+
+    const sessionId = `live_groq_conv_${Date.now()}`;
+    // Turn 1: Over-constrained query with closest option / partial match
+    const res1 = await orchestrator.processMessage('I need a coding laptop under 40000', sessionId);
+    const targetSku = res1.recommendation?.recommended_laptop?.product.sku || (res1.recommendation as any)?.closest_options?.[0]?.product?.sku;
+    assert.ok(targetSku, 'Expected laptop candidate in partial match');
+
+    // Turn 2: Natural conversational reference
+    const res2 = await orchestrator.processMessage('give me that', sessionId);
+    assert.ok(res2.recommendation?.recommended_laptop, 'Expected laptop selected');
+    assert.equal(res2.recommendation.recommended_laptop.product.sku, targetSku);
+    assert.ok((res2.explanation?.length ?? 0) > 10, 'Expected natural Groq explanation');
+  });
 });
+

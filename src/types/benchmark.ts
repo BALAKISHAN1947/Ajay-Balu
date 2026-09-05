@@ -14,6 +14,14 @@ import type { AgentState, MatchType } from './agent.ts';
 
 export type OpportunityType = 'WON' | 'PARTIAL' | 'LOST' | 'UNSUPPORTED_CATEGORY';
 
+export type HighLevelFailureType =
+  | 'DISCOVERY_FAILURE'
+  | 'INTENT_MATCH_FAILURE'
+  | 'CONSTRAINT_FAILURE'
+  | 'COMPATIBILITY_FAILURE'
+  | 'INVENTORY_FAILURE'
+  | 'TRANSACTION_FAILURE';
+
 export type LostOpportunityReasonCode =
   | 'MISSING_ATTRIBUTE'
   | 'AMBIGUOUS_ATTRIBUTE'
@@ -128,6 +136,18 @@ export interface BenchmarkResult {
   loss_reason_code?: LostOpportunityReasonCode;
   loss_reason_detail?: string;
   loss_reason_description?: string;
+  high_level_failure_type?: HighLevelFailureType;
+  structured_interpretation?: {
+    workload?: string;
+    category?: string;
+    brand?: string;
+    budget_max?: number;
+    hard_constraints?: Record<string, any>;
+  };
+  catalog_evidence?: string;
+  verified_price_inr?: number;
+  modeled_opportunity_value_inr?: number;
+  recommended_catalog_action?: string;
   catalog_attributed_opportunity_inr: number;
   opportunity_value_inr?: number;
   simulated_acceptance: boolean;
@@ -144,6 +164,38 @@ export interface LossReasonMetrics {
   catalog_attributed_opportunity_inr: number;
 }
 
+export interface HighLevelFailureSummary {
+  failure_type: HighLevelFailureType;
+  label: string;
+  description: string;
+  affected_intents_count: number;
+  affected_intent_count?: number;
+  percentage_of_benchmark: number;
+  benchmark_percentage: number;
+  modeled_opportunity_value_inr: number;
+  detailed_codes: LostOpportunityReasonCode[];
+  representative_examples: string[];
+}
+
+export interface TopCommerceOpportunity {
+  id: string;
+  title: string;
+  priority_level: 'HIGH PRIORITY' | 'MEDIUM PRIORITY' | 'OPPORTUNITY';
+  severity?: string;
+  rank?: number;
+  affected_intents_count: number;
+  affected_intent_count?: number;
+  modeled_opportunity_value_inr: number;
+  failure_type: HighLevelFailureType;
+  affected_catalog_field: string;
+  current_verified_state: string;
+  merchant_action: string;
+  recommended_merchant_action?: string;
+  expected_effect: string;
+  associated_fix_id?: string;
+  affected_benchmark_ids: string[];
+}
+
 export interface BenchmarkRunSummary {
   run_id: string;
   benchmark_version: string;
@@ -156,11 +208,13 @@ export interface BenchmarkRunSummary {
   partial_count: number;
   lost_count: number;
   product_match_rate: number;          // WON / supported_intents
+  intent_match_rate?: number;          // Alias
   hard_constraint_adherence: number;   // Satisfied checks / total evaluated checks
   variant_accuracy_rate: number;       // Selected variants matching required specs
   compatibility_success_rate: number;  // Passed compatibility checks / required checks
   simulated_acceptance_rate: number;   // Simulated acceptance proportion
   checkout_ready_rate: number;         // Checkout-ready proportion
+  catalog_coverage?: number;           // Proportion of benchmark intents supported
   eligible_cross_sells_count: number;
   over_budget_cross_sells_count: number;
   simulated_cross_sells_accepted_count: number;
@@ -168,6 +222,25 @@ export interface BenchmarkRunSummary {
   avg_basket_after_cross_sell_inr: number;
   incremental_basket_value_inr: number;
   catalog_attributed_opportunity_value_inr: number;
+  modeled_catalog_opportunity_value_inr: number;
+  modeled_catalog_opportunity?: number;// Alias
+  ai_buyer_readiness_score: number;
+  readiness_score?: number;            // Alias
+  readiness_formula_explanation: string;
+  readiness_components: {
+    intent_match_rate_pct: number;
+    constraint_adherence_pct: number;
+    checkout_readiness_pct: number;
+    catalog_coverage_pct: number;
+    weights: {
+      intent_match: number;
+      constraint_adherence: number;
+      checkout_readiness: number;
+      catalog_coverage: number;
+    };
+  };
+  high_level_failure_map: HighLevelFailureSummary[];
+  top_commerce_opportunities: TopCommerceOpportunity[];
   loss_reasons_breakdown: LossReasonMetrics[];
   results: BenchmarkResult[];
 }
@@ -191,6 +264,7 @@ export interface CatalogFixAction {
   issue_id: string;
   sku: string;
   product_name: string;
+  brand?: string;
   field_path: string;
   current_value: any;
   proposed_value: any;
@@ -244,13 +318,21 @@ export interface ExperimentComparison {
   /** The enriched catalog version label (includes fix IDs applied) */
   enriched_catalog_version: string;
   timestamp: string;
-  /** All fix IDs present in Version B (may be more than one for multi-fix runs) */
+  /** All fix IDs present in Version B (must be exactly one for single-fix experiments) */
   approved_fixes_applied: string[];
   /**
    * The single causal fix for an isolated one-fix experiment.
-   * Null for multi-fix runs. Identifies exactly which fix caused Version B.
+   * Identifies exactly which fix caused Version B.
    */
   approved_fix_id: string | null;
+  /** Title / description of the single approved fix */
+  approved_fix_title: string | null;
+  /** SKUs modified in Catalog Version B (must be exactly 1 for single-fix runs) */
+  changed_skus: string[];
+  /** Catalog fields modified in Catalog Version B (must be exactly 1 for single-fix runs) */
+  changed_fields: string[];
+  /** Same benchmark version evaluated for both A and B */
+  same_benchmark_version?: string;
   /**
    * True only when at least one buyer intent moved between outcome categories
    * (e.g. LOST→WON, PARTIAL→WON). False when all WON/PARTIAL/LOST counts
@@ -260,12 +342,15 @@ export interface ExperimentComparison {
   has_outcome_changes: boolean;
   metrics: {
     product_match_rate: MetricDelta;
+    hard_constraint_adherence?: MetricDelta;
     variant_accuracy_rate: MetricDelta;
     compatibility_success_rate: MetricDelta;
     checkout_ready_rate: MetricDelta;
     simulated_acceptance_rate: MetricDelta;
     simulated_cross_sell_acceptance_rate: MetricDelta;
     catalog_attributed_opportunity_value_inr: MetricDelta;
+    modeled_catalog_opportunity_value_inr?: MetricDelta;
+    ai_buyer_readiness_score?: MetricDelta;
     won_count: MetricDelta;
     lost_count: MetricDelta;
   };

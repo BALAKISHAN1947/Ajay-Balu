@@ -1,4 +1,4 @@
-import type { CustomerIntent, HardConstraints, SoftPreferences, BudgetSpecification } from '../types/intent.ts';
+import type { CustomerIntent, HardConstraints, SoftPreferences, BudgetSpecification, FollowUpAction, ReferenceTarget } from '../types/intent.ts';
 import type { ProductCategory } from '../types/catalog.ts';
 
 export interface ValidationResult {
@@ -123,6 +123,8 @@ export function validateCustomerIntent(input: unknown): ValidationResult {
     intent_id: obj.intent_id ?? `intent_${Date.now()}`,
     raw_query: obj.raw_query ?? '',
     target_workload: obj.target_workload,
+    requested_brand: typeof obj.requested_brand === 'string' ? obj.requested_brand : undefined,
+    requested_model: typeof obj.requested_model === 'string' ? obj.requested_model : undefined,
     required_categories: obj.required_categories,
     requested_category_raw: obj.requested_category_raw,
     unsupported_categories: Array.isArray(obj.unsupported_categories) ? obj.unsupported_categories : [],
@@ -154,7 +156,11 @@ export function validateCustomerIntent(input: unknown): ValidationResult {
       bag_must_fit_laptop: true,
       mouse_must_interface_without_adapters: true
     },
-    ambiguous_fields: obj.ambiguous_fields ?? []
+    ambiguous_fields: obj.ambiguous_fields ?? [],
+    follow_up_action: typeof obj.follow_up_action === 'string' ? (obj.follow_up_action as FollowUpAction) : undefined,
+    reference_target: typeof obj.reference_target === 'string' ? (obj.reference_target as ReferenceTarget) : undefined,
+    target_sku: typeof obj.target_sku === 'string' ? obj.target_sku : undefined,
+    target_option_index: typeof obj.target_option_index === 'number' ? obj.target_option_index : undefined
   };
 
   return { valid: true, intent: validatedIntent, errors: [] };

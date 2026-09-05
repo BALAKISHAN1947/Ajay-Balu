@@ -46,6 +46,8 @@ export interface CustomerIntent {
   intent_id?: string;
   raw_query?: string;
   target_workload?: string;
+  requested_brand?: string;
+  requested_model?: string;
   required_categories: ProductCategory[];
   requested_category_raw?: string;
   unsupported_categories?: string[];
@@ -58,4 +60,23 @@ export interface CustomerIntent {
     mouse_must_interface_without_adapters: boolean;
   };
   ambiguous_fields?: AmbiguousField[];
+  follow_up_action?: FollowUpAction;
+  reference_target?: ReferenceTarget;
+  target_sku?: string;
+  target_option_index?: number;
 }
+
+export type FollowUpAction =
+  | 'SELECT_PREVIOUS_RECOMMENDATION'
+  | 'SELECT_PREVIOUS_OPTION'
+  | 'SELECT_PRODUCT'
+  | 'REFINE_PREVIOUS_REQUEST'
+  | 'NONE';
+
+export type ReferenceTarget =
+  | 'previous_recommendation'
+  | 'first_option'
+  | 'second_option'
+  | 'cheaper_option'
+  | 'selected_product'
+  | 'none';

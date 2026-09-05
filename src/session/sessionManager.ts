@@ -86,8 +86,8 @@ export class SessionManager {
 
     if (response.recommendation) {
       session.latest_recommendation = response.recommendation;
-      // Initialize selected accessories with all recommended accessories by default
-      session.selected_accessory_skus = response.recommendation.accessories.map((a) => a.sku);
+      session.selected_accessory_skus = (response.recommendation.accessories || []).map((a) => a.sku);
+
       // Invalidate any previous approval
       delete session.active_approval_id;
       delete session.active_basket_hash;
@@ -361,6 +361,7 @@ export class SessionManager {
 
     const finalTotal = lineItems.reduce((acc, item) => acc + item.price_inr, 0);
     const budgetCeiling = rec.budget_ceiling_inr;
+    const hasBudgetLimit = budgetCeiling !== undefined && budgetCeiling > 0 && isFinite(budgetCeiling);
 
     const basketHash = computeBasketHash({
       sessionId,
@@ -371,17 +372,27 @@ export class SessionManager {
     });
     session.active_basket_hash = basketHash;
 
-    const isOverBudget = finalTotal > budgetCeiling;
+    const isOverBudget = hasBudgetLimit ? finalTotal > budgetCeiling : false;
     const overBudgetByInr = isOverBudget ? finalTotal - budgetCeiling : 0;
-    const gateStatus = isOverBudget ? 'BLOCKED_OVER_BUDGET' : 'AUTHORIZED_PENDING_GATEWAY';
 
-    this.addAuditEvent(sessionId, isOverBudget ? 'PURCHASE_REVIEW_BLOCKED_OVER_BUDGET' : 'PURCHASE_REVIEW_OPENED', {
+    // For explicitly selected customer orders, checkout eligibility depends on validity:
+    // in-stock items, active products, verified compatibility, and valid authoritative sum.
+    const hasOutOfStockItem = laptop.stock_quantity <= 0 || selectedAccessories.some((a) => !a.in_stock);
+    const hasIncompatibleAccessory = selectedAccessories.some((a) => !a.compatibility_status);
+    const gateStatus = hasOutOfStockItem
+      ? 'BLOCKED_STOCK_DEPLETED'
+      : hasIncompatibleAccessory
+      ? 'BLOCKED_INCOMPATIBLE'
+      : 'AUTHORIZED_PENDING_GATEWAY';
+
+    this.addAuditEvent(sessionId, 'PURCHASE_REVIEW_OPENED', {
       line_items_count: lineItems.length,
       final_total_inr: finalTotal,
       basket_hash: basketHash,
       budget_ceiling_inr: budgetCeiling,
       is_over_budget: isOverBudget,
-      over_budget_by_inr: overBudgetByInr
+      over_budget_by_inr: overBudgetByInr,
+      gate_status: gateStatus
     });
 
     return {
@@ -389,7 +400,7 @@ export class SessionManager {
       created_at: new Date().toISOString(),
       customer_budget_inr: budgetCeiling,
       final_total_inr: finalTotal,
-      budget_margin_inr: budgetCeiling - finalTotal,
+      budget_margin_inr: hasBudgetLimit ? budgetCeiling - finalTotal : 0,
       basket_hash: basketHash,
       primary_product: {
         sku: laptop.sku,

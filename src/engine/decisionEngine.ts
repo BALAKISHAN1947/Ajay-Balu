@@ -25,6 +25,14 @@ export class DeterministicDecisionEngine {
     const allMice = this.repo.getMice();
     const allBags = this.repo.getBags();
 
+    // Compute candidate brands considered across all active catalog laptops (Bug 2)
+    const activeInStockBrands = Array.from(
+      new Set(allLaptops.filter((l) => l.is_active && l.stock_quantity > 0).map((l) => l.brand))
+    );
+    const candidate_brands_considered = intent.requested_brand
+      ? [intent.requested_brand]
+      : activeInStockBrands;
+
     // Step 0: Check for Unsupported Category
     if (intent.unsupported_categories && intent.unsupported_categories.length > 0 && intent.required_categories.length === 0) {
       const unsupported = intent.unsupported_categories[0];
@@ -39,14 +47,15 @@ export class DeterministicDecisionEngine {
         budget_ceiling_inr: intent.hard_constraints.max_total_budget ?? 0,
         budget_margin_inr: 0,
         reasons: [
-          `Nexora Technologies does not currently sell ${unsupported}. Our catalog specializes exclusively in high-performance laptops, ergonomic mice, and protective workspace bags.`
+          `Our verified catalog specializes exclusively in high-performance laptops, ergonomic mice, and protective workspace bags. Our catalog does not currently sell ${unsupported}.`
         ],
         trade_offs: [],
         rejections: [],
         compatibility_checks: [],
         confidence_score: 0.0,
         unsupported_category: unsupported,
-        supported_categories: ['laptop', 'mouse', 'bag']
+        supported_categories: ['laptop', 'mouse', 'bag'],
+        candidate_brands_considered
       };
     }
 
@@ -67,6 +76,20 @@ export class DeterministicDecisionEngine {
       // Check if there is an in-stock laptop that meets ALL technical requirements but slightly exceeds budget (within 20%)
       const nearBudgetCandidates = allLaptops.filter((p) => {
         if (!p.is_active || p.stock_quantity <= 0) return false;
+        // Respect requested brand
+        if (intent.requested_brand && p.brand.toLowerCase() !== intent.requested_brand.toLowerCase().trim()) return false;
+        // Respect requested model
+        if (intent.requested_model) {
+          const targetModel = intent.requested_model.toLowerCase().trim();
+          const laptopName = p.name.toLowerCase();
+          const modelWords = targetModel
+            .split(/\s+/)
+            .filter((w) => w.length > 2 && w !== intent.requested_brand?.toLowerCase());
+          const isMatch =
+            laptopName.includes(targetModel) ||
+            (modelWords.length > 0 && modelWords.every((w) => laptopName.includes(w)));
+          if (!isMatch) return false;
+        }
         if (intent.hard_constraints.min_ram_gb && (p.ram.capacity_gb === null || p.ram.capacity_gb < intent.hard_constraints.min_ram_gb)) return false;
         if (intent.hard_constraints.min_storage_gb && p.storage.capacity_gb < intent.hard_constraints.min_storage_gb) return false;
         if (intent.hard_constraints.max_weight_g && p.weight_g > intent.hard_constraints.max_weight_g) return false;
@@ -113,8 +136,16 @@ export class DeterministicDecisionEngine {
           compatibility_checks: [],
           confidence_score: 0.70,
           constraint_analysis: analysis,
-          proactive_add_ons: evaluateProactiveCrossSells(partialProduct, intent, allMice, allBags)
+          proactive_add_ons: evaluateProactiveCrossSells(partialProduct, intent, allMice, allBags),
+          candidate_brands_considered
         };
+      }
+
+      let noMatchPrimaryReason = 'No laptop in the catalog satisfied all hard constraints (budget, minimum RAM, storage, or stock requirements).';
+      if (intent.requested_model) {
+        noMatchPrimaryReason = "I couldn't find that exact model in the verified catalog.";
+      } else if (intent.requested_brand) {
+        noMatchPrimaryReason = `No ${intent.requested_brand} laptop in the verified catalog satisfied all hard constraints.`;
       }
 
       // No close single candidate exists -> NO_PRODUCT_MATCH with full constraint breakdown & nearest alternatives
@@ -129,7 +160,7 @@ export class DeterministicDecisionEngine {
         budget_ceiling_inr: maxBudget ?? 0,
         budget_margin_inr: 0,
         reasons: [
-          'No laptop in the catalog satisfied all hard constraints (budget, minimum RAM, storage, or stock requirements).',
+          noMatchPrimaryReason,
           ...analysis.failure_summary_points
         ],
         trade_offs: analysis.trade_off_options,
@@ -139,7 +170,8 @@ export class DeterministicDecisionEngine {
         unfulfilled_constraints: analysis.failed_constraints.length > 0
           ? analysis.failed_constraints
           : ['UNFULFILLED_HARD_CONSTRAINTS'],
-        constraint_analysis: analysis
+        constraint_analysis: analysis,
+        candidate_brands_considered
       };
     }
 
@@ -204,7 +236,8 @@ export class DeterministicDecisionEngine {
           rejections: allRejections,
           compatibility_checks: bundle.compatibility_evidence,
           confidence_score: Number(confidence.toFixed(2)),
-          proactive_add_ons: proactiveAddOns
+          proactive_add_ons: proactiveAddOns,
+          candidate_brands_considered
         };
       }
     }
@@ -236,7 +269,8 @@ export class DeterministicDecisionEngine {
       rejections: allRejections,
       compatibility_checks: [],
       confidence_score: 0.80,
-      proactive_add_ons: topAddOns
+      proactive_add_ons: topAddOns,
+      candidate_brands_considered
     };
   }
 }

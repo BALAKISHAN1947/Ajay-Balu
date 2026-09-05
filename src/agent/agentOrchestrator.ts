@@ -1,6 +1,9 @@
 import type { AgentResponse, AgentState, MatchType } from '../types/agent.ts';
 import type { ILLMProvider } from '../llm/llmProvider.ts';
 import type { CustomerIntent } from '../types/intent.ts';
+import type { ConversationContext, SessionOptionItem, Session } from '../types/session.ts';
+import type { RecommendationResult, ScoredLaptop } from '../types/recommendation.ts';
+import { lockLaptopVariant } from '../engine/variantLock.ts';
 import { getLLMProvider } from '../llm/llmProvider.ts';
 import { validateCustomerIntent } from '../nlu/intentValidator.ts';
 import { detectAmbiguity } from '../nlu/ambiguityDetector.ts';
@@ -37,6 +40,45 @@ export class AgentOrchestrator {
     this.sessionManager = sessionManager;
   }
 
+  private buildConversationContext(session: Session): ConversationContext {
+    const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+    const lastAgentMsg = [...session.messages].reverse().find((m) => m.role === 'agent');
+
+    const rec = session.latest_recommendation;
+    const closest: SessionOptionItem[] = (rec?.constraint_analysis?.closest_options || []).map((o, idx) => ({
+      sku: o.sku,
+      name: o.name,
+      brand: (o as any).brand || this.repo.getProductBySku(o.sku)?.brand,
+      price_inr: o.price_inr,
+      position: idx + 1
+    }));
+
+    const recommended: SessionOptionItem | null = rec?.recommended_laptop ? {
+      sku: rec.recommended_laptop.product.sku,
+      name: rec.recommended_laptop.product.name,
+      brand: rec.recommended_laptop.product.brand,
+      price_inr: rec.recommended_laptop.product.price_inr,
+      position: 1
+    } : null;
+
+    const comparison: SessionOptionItem[] = session.comparison_products || [];
+
+    return {
+      last_user_message: lastUserMsg?.content,
+      last_assistant_state: session.current_state,
+      last_assistant_explanation: lastAgentMsg?.content,
+      last_assistant_result: {
+        state: session.current_state,
+        recommended_product: recommended,
+        closest_options: closest,
+        comparison_options: comparison
+      },
+      current_selected_product: recommended,
+      current_selected_skus: session.selected_accessory_skus,
+      current_basket_total_inr: rec?.total_price_inr
+    };
+  }
+
   /**
    * Processes a natural-language customer message through the AgentReady pipeline:
    * 1. Session Context & Follow-up Resolution
@@ -49,11 +91,46 @@ export class AgentOrchestrator {
    */
   public async processMessage(
     userMessage: string,
-    sessionId = `ses_${Date.now()}`
+    sessionId = `ses_${Date.now()}`,
+    clientT1?: number
   ): Promise<AgentResponse> {
+    const t2_server_received = Date.now();
     const startTime = performance.now();
     const session = this.sessionManager.getOrCreateSession(sessionId);
     this.sessionManager.recordUserMessage(sessionId, userMessage);
+
+    let t3_groq_intent_start: number | undefined;
+    let t4_groq_intent_received: number | undefined;
+    let t5_engine_start: number | undefined;
+    let t6_engine_completed: number | undefined;
+    let t7_groq_explanation_start: number | undefined;
+    let t8_groq_explanation_completed: number | undefined;
+
+    const buildTimings = (): import('../types/agent.ts').LatencyTimings => {
+      const t9_server_completed = Date.now();
+      const llm_intent_ms = (t3_groq_intent_start && t4_groq_intent_received) ? t4_groq_intent_received - t3_groq_intent_start : undefined;
+      const deterministic_engine_ms = (t5_engine_start && t6_engine_completed) ? t6_engine_completed - t5_engine_start : undefined;
+      const llm_explanation_ms = (t7_groq_explanation_start && t8_groq_explanation_completed) ? t8_groq_explanation_completed - t7_groq_explanation_start : undefined;
+      const total_server_ms = t9_server_completed - t2_server_received;
+      const frontend_roundtrip_ms = clientT1 ? t9_server_completed - clientT1 : undefined;
+
+      return {
+        t1_frontend_start: clientT1,
+        t2_server_received,
+        t3_groq_intent_start,
+        t4_groq_intent_received,
+        t5_engine_start,
+        t6_engine_completed,
+        t7_groq_explanation_start,
+        t8_groq_explanation_completed,
+        t9_server_completed,
+        llm_intent_ms,
+        deterministic_engine_ms,
+        llm_explanation_ms,
+        total_server_ms,
+        frontend_roundtrip_ms
+      };
+    };
 
     const safeUserMessage = typeof userMessage === 'string' ? userMessage : String(userMessage || '');
     const lower = safeUserMessage.toLowerCase().trim();
@@ -364,7 +441,15 @@ export class AgentOrchestrator {
     }
 
     // Contextual Handler B3: Budget Downsell / Cheaper Alternative Inquiry ("Can I get something cheaper?", "Cheaper option")
-    if (session.latest_recommendation?.recommended_laptop && /\b(cheaper|lower price|less expensive|budget option|save money|more affordable)\b/i.test(lower)) {
+    const isSelectingCheaperOption =
+      Boolean(session.comparison_products && session.comparison_products.length > 1) ||
+      /\b(?:take|give me|i'll take|ill take|i will take|i want|pick)\s+(?:the\s+)?cheaper\b/i.test(lower);
+
+    if (
+      session.latest_recommendation?.recommended_laptop &&
+      !isSelectingCheaperOption &&
+      /\b(cheaper|lower price|less expensive|budget option|save money|more affordable)\b/i.test(lower)
+    ) {
       const rec = session.latest_recommendation;
       const currentLaptop = rec.recommended_laptop!.product;
       const allLaptops = this.repo.getLaptops().filter((l) => l.is_active && l.stock_quantity > 0 && l.price_inr < currentLaptop.price_inr);
@@ -468,7 +553,7 @@ export class AgentOrchestrator {
     // Contextual Handler E: Natural Language Comparison & Evidence-Based Decision Support
     // ("Compare AeroBook 14 and DevForge 15", "Which is better?", "Which one should I buy for coding and daily travel?", "Show me the best option and one alternative")
     const isComparisonOrDecision =
-      /\b(compare|comparison|versus|\bvs\b|which is better|which one is better|which should i buy|which one should i buy|best option and (?:one )?alternative|show me (?:the )?best option|one alternative)\b/i.test(lower);
+      /\b(compare|comparison|versus|\bvs\b|which is better|which one is better|which should i buy|which one should i buy|best option and (?:one )?alternative|show me (?:the )?best option|one alternative|best two laptops|two best laptops|best 2 laptops|top 2 laptops|top two laptops|best laptops for coding)\b/i.test(lower);
 
     if (isComparisonOrDecision) {
       const allLaptops = this.repo.getLaptops();
@@ -499,6 +584,21 @@ export class AgentOrchestrator {
         }
       }
 
+      // Brand matching in comparison (e.g. "Compare Apple and Lenovo laptops under 90000")
+      const brands = ['apple', 'lenovo', 'dell', 'hp', 'asus', 'acer', 'samsung'];
+      for (const b of brands) {
+        if (new RegExp(`\\b${b}\\b`, 'i').test(lower)) {
+          const brandLaptops = allLaptops.filter((l) => l.is_active && l.brand.toLowerCase() === b);
+          if (brandLaptops.length > 0) {
+            const underBudget = (budgetCheck && typeof budgetCheck.amount === 'number') ? brandLaptops.filter(l => l.price_inr <= (budgetCheck.amount as number)) : brandLaptops;
+            const chosen = underBudget[0] || brandLaptops[0];
+            if (!mentionedLaptops.some((m) => m.sku === chosen.sku)) {
+              mentionedLaptops.push(chosen);
+            }
+          }
+        }
+      }
+
       let prodA = mentionedLaptops[0];
       let prodB = mentionedLaptops[1];
 
@@ -510,6 +610,18 @@ export class AgentOrchestrator {
       if (wantsGaming && mentionedLaptops.length === 0) {
         prodA = allLaptops.find((l) => l.sku === 'NX-LP-TITAN15-12') || allLaptops[0];
         prodB = allLaptops.find((l) => l.sku === 'NX-LP-PRO16-05') || allLaptops[1];
+      }
+
+      const wantsTravel =
+        /\b(travel|commute|portable|light|lightweight)\b/i.test(lower) ||
+        session.current_intent?.soft_preferences.max_preferred_weight_g !== undefined;
+      const wantsCoding =
+        /\b(coding|dev|code|software|programming)\b/i.test(lower) ||
+        session.current_intent?.target_workload === 'coding';
+
+      if (wantsCoding && mentionedLaptops.length === 0) {
+        prodA = allLaptops.find((l) => l.sku === 'NX-LP-DEV15-02') || allLaptops[0];
+        prodB = allLaptops.find((l) => l.sku === 'NX-LP-AERO14-01') || allLaptops[1];
       }
 
       if (!prodA && session.latest_recommendation?.recommended_laptop) {
@@ -526,12 +638,14 @@ export class AgentOrchestrator {
         }
       }
 
-      const wantsTravel =
-        /\b(travel|commute|portable|light|lightweight)\b/i.test(lower) ||
-        session.current_intent?.soft_preferences.max_preferred_weight_g !== undefined;
-      const wantsCoding =
-        /\b(coding|dev|code|software|programming)\b/i.test(lower) ||
-        session.current_intent?.target_workload === 'coding';
+      // Record comparison options in session for subsequent follow-up reference resolution
+      session.comparison_products = [prodA, prodB].map((p, idx) => ({
+        sku: p.sku,
+        name: p.name,
+        brand: p.brand,
+        price_inr: p.price_inr,
+        position: idx + 1
+      }));
 
       const weightDiffG = Math.abs(prodA.weight_g - prodB.weight_g);
       const batteryDiffWh = Math.abs(prodA.battery.capacity_wh - prodB.battery.capacity_wh);
@@ -656,7 +770,10 @@ export class AgentOrchestrator {
 
 
     // Contextual Handler D: Clarification Answer / Follow-up Refinement
-    if (session.current_state === 'CLARIFICATION_REQUIRED' && session.current_intent) {
+    const hasBrandMention = /\b(apple|lenovo|dell|hp|asus|acer|samsung|nexora)\b/i.test(lower);
+    const isNewSearchPhrase = /\b(i want|i need|looking for|search for|find me|give me a laptop)\b/i.test(lower);
+
+    if (session.current_state === 'CLARIFICATION_REQUIRED' && session.current_intent && !hasBrandMention && !isNewSearchPhrase) {
       const prevIntent = session.current_intent;
       const budgetUpdate = normalizeBudget(userMessage);
       const ramUpdate = normalizeRam(userMessage);
@@ -747,6 +864,8 @@ export class AgentOrchestrator {
         unsupported_category: engineResult.unsupported_category,
         supported_categories: engineResult.supported_categories,
         unfulfilled_constraints: engineResult.unfulfilled_constraints,
+        candidate_brands_considered: engineResult.candidate_brands_considered,
+        selected_accessory_skus: session.selected_accessory_skus,
         execution_time_ms: Number((performance.now() - startTime).toFixed(1))
       };
 
@@ -755,17 +874,22 @@ export class AgentOrchestrator {
     }
 
     // Step 1: LLM / NLU Intent Extraction
+    const conversationContext = this.buildConversationContext(session);
     let rawIntentJson: string;
     try {
-      rawIntentJson = await this.llmProvider.generateStructuredIntent(userMessage);
+      t3_groq_intent_start = Date.now();
+      rawIntentJson = await this.llmProvider.generateStructuredIntent(userMessage, conversationContext);
+      t4_groq_intent_received = Date.now();
     } catch (err: any) {
+      t4_groq_intent_received = Date.now();
       const response: AgentResponse = {
         session_id: sessionId,
         state: 'ERROR',
         user_query: userMessage,
         intent: null,
         errors: [`Intent extraction failed: ${err.message}`],
-        execution_time_ms: Number((performance.now() - startTime).toFixed(1))
+        execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+        timings: buildTimings()
       };
       this.sessionManager.recordAgentResponse(sessionId, response);
       return response;
@@ -783,7 +907,8 @@ export class AgentOrchestrator {
         user_query: userMessage,
         intent: null,
         errors: [`LLM produced invalid JSON syntax: ${err.message}`],
-        execution_time_ms: Number((performance.now() - startTime).toFixed(1))
+        execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+        timings: buildTimings()
       };
       this.sessionManager.recordAgentResponse(sessionId, response);
       return response;
@@ -865,6 +990,18 @@ export class AgentOrchestrator {
       if (!Array.isArray(obj.required_categories)) {
         obj.required_categories = catExtraction.supported;
       }
+
+      // Enforce: Optional compatible accessories MUST always start unchecked.
+      // Do not allow LLM parser to re-add mouse or bag to required_categories unless explicitly present in user query.
+      if (Array.isArray(obj.required_categories) && (!obj.follow_up_action || obj.follow_up_action === 'NONE')) {
+        const hasExplicitMouse = catExtraction.supported.includes('mouse');
+        const hasExplicitBag = catExtraction.supported.includes('bag');
+        obj.required_categories = obj.required_categories.filter((cat: string) => {
+          if (cat === 'mouse') return hasExplicitMouse;
+          if (cat === 'bag') return hasExplicitBag;
+          return true;
+        });
+      }
     }
 
     // Step 3: Schema Validation
@@ -876,13 +1013,161 @@ export class AgentOrchestrator {
         user_query: userMessage,
         intent: null,
         errors: validation.errors,
-        execution_time_ms: Number((performance.now() - startTime).toFixed(1))
+        execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+        timings: buildTimings()
       };
       this.sessionManager.recordAgentResponse(sessionId, response);
       return response;
     }
 
     let intent = validation.intent;
+
+    // Step 3b: Follow-Up Conversational Reference Resolution Gate
+    // Groq performs natural-language reference resolution and outputs follow_up_action / target_sku.
+    // The backend deterministically verifies the structured result.
+    // Do NOT hardcode customer sentences into backend decision logic.
+    let isFollowUpSelection =
+      (intent.follow_up_action === 'SELECT_PRODUCT' ||
+       intent.follow_up_action === 'SELECT_PREVIOUS_RECOMMENDATION' ||
+       intent.follow_up_action === 'SELECT_PREVIOUS_OPTION') &&
+      Boolean(intent.target_sku);
+
+    const res = conversationContext.last_assistant_result;
+
+    // Check if user requested a brand that differs from target_sku's brand.
+    // If user says "I want an Apple laptop under 90000", this is a NEW SEARCH and must NOT reuse previous products (Bug 7).
+    if (isFollowUpSelection && intent.target_sku) {
+      const targetLaptop = this.repo.getLaptopSpecs(intent.target_sku);
+      if (intent.requested_brand && targetLaptop && targetLaptop.brand.toLowerCase() !== intent.requested_brand.toLowerCase().trim()) {
+        isFollowUpSelection = false;
+        intent.follow_up_action = 'NONE';
+        intent.target_sku = undefined;
+      }
+    }
+
+    if (isFollowUpSelection && res && intent.target_sku) {
+      const targetSku = intent.target_sku;
+      const laptop = this.repo.getLaptopSpecs(targetSku);
+      if (!laptop) {
+        const response: AgentResponse = {
+          session_id: sessionId,
+          state: 'NO_PRODUCT_MATCH',
+          match_type: 'NO_PRODUCT_MATCH',
+          user_query: userMessage,
+          intent,
+          explanation: `I could not locate the referenced product (SKU: ${targetSku}) in the verified catalog. Here are verified options from our catalog:`,
+          errors: [`Referenced SKU "${targetSku}" not found in catalog.`],
+          candidate_brands_considered: [targetSku],
+          selected_accessory_skus: session.selected_accessory_skus,
+          execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+          timings: buildTimings()
+        };
+        this.sessionManager.recordAgentResponse(sessionId, response);
+        return response;
+      }
+
+      if (!laptop.is_active || laptop.stock_quantity <= 0) {
+        const inStockAlts = this.repo.getLaptops().filter((l) => l.is_active && l.stock_quantity > 0);
+        const alt = inStockAlts[0];
+        const explanation = `The referenced laptop **${laptop.name}** is currently out of stock. We have verified in-stock alternatives available, such as the **${alt.name}** at ₹${alt.price_inr.toLocaleString('en-IN')}.`;
+
+        const response: AgentResponse = {
+          session_id: sessionId,
+          state: 'NO_PRODUCT_MATCH',
+          match_type: 'NO_PRODUCT_MATCH',
+          user_query: userMessage,
+          intent,
+          explanation,
+          errors: [`Referenced SKU ${laptop.sku} is out of stock.`],
+          candidate_brands_considered: [laptop.brand],
+          selected_accessory_skus: session.selected_accessory_skus,
+          execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+          timings: buildTimings()
+        };
+        this.sessionManager.recordAgentResponse(sessionId, response);
+        return response;
+      }
+
+      // Product is active, in-stock, and verified in catalog
+      const lockedVariant = lockLaptopVariant(laptop);
+      const allMice = this.repo.getMice();
+      const allBags = this.repo.getBags();
+
+      const selectionIntent: CustomerIntent = {
+        ...intent,
+        target_workload: intent.target_workload || laptop.target_workload[0] || 'work',
+        requested_brand: laptop.brand,
+        requested_model: laptop.name,
+        required_categories: ['laptop'],
+        budget: intent.budget || session.current_intent?.budget,
+        hard_constraints: {
+          ...intent.hard_constraints,
+          max_total_budget: laptop.price_inr,
+          min_ram_gb: laptop.ram.capacity_gb ?? undefined,
+          in_stock_only: true
+        },
+        follow_up_action: 'SELECT_PRODUCT',
+        reference_target: intent.reference_target || 'previous_recommendation',
+        target_sku: laptop.sku
+      };
+
+      const scoredLaptop: ScoredLaptop = {
+        product: laptop,
+        total_score: 95,
+        component_scores: { portability: 80, battery: 80, longevity: 80 },
+        trade_offs: []
+      };
+
+      const proactiveAddOns = evaluateProactiveCrossSells(laptop, selectionIntent, allMice, allBags);
+
+      const recResult: RecommendationResult = {
+        status: 'SUCCESS',
+        match_type: 'VALID_MATCH',
+        recommended_laptop: scoredLaptop,
+        locked_variant: lockedVariant,
+        accessories: [], // keep accessories optional and unchecked
+        itemized_line_items: [{ sku: laptop.sku, name: laptop.name, price_inr: laptop.price_inr }],
+        total_price_inr: laptop.price_inr,
+        budget_ceiling_inr: laptop.price_inr,
+        budget_margin_inr: 0,
+        reasons: [`Selected verified system: **${laptop.name}** (SKU: ${laptop.sku}) at ₹${laptop.price_inr.toLocaleString('en-IN')}.`],
+        trade_offs: [],
+        rejections: [],
+        compatibility_checks: [],
+        confidence_score: 1.0,
+        proactive_add_ons: proactiveAddOns,
+        candidate_brands_considered: [laptop.brand]
+      };
+
+      // Customer-facing response generated by Groq explanation layer
+      let explanation = '';
+      try {
+        t7_groq_explanation_start = Date.now();
+        explanation = await this.llmProvider.generateExplanation(recResult, userMessage);
+        t8_groq_explanation_completed = Date.now();
+      } catch {
+        t8_groq_explanation_completed = Date.now();
+        explanation = `Selected the verified system **${laptop.name}** (SKU: ${laptop.sku}) at ₹${laptop.price_inr.toLocaleString('en-IN')}. Verified compatible accessories are available below (optional). Ready for purchase authorization via Razorpay.`;
+      }
+
+      const response: AgentResponse = {
+        session_id: sessionId,
+        state: 'RECOMMENDATION_READY',
+        match_type: 'VALID_MATCH',
+        user_query: userMessage,
+        intent: selectionIntent,
+        recommendation: recResult,
+        explanation,
+        candidate_brands_considered: [laptop.brand],
+        selected_accessory_skus: session.selected_accessory_skus,
+        execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+        timings: buildTimings()
+      };
+
+      this.sessionManager.recordAgentResponse(sessionId, response);
+      session.selected_accessory_skus = [];
+      return response;
+    }
 
     // Step 4: Ambiguity Detection Gate
     const ambiguity = detectAmbiguity(intent, userMessage);
@@ -893,20 +1178,26 @@ export class AgentOrchestrator {
         user_query: userMessage,
         intent: intent,
         clarification_question: ambiguity.clarificationQuestion,
-        execution_time_ms: Number((performance.now() - startTime).toFixed(1))
+        execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+        timings: buildTimings()
       };
       this.sessionManager.recordAgentResponse(sessionId, response);
       return response;
     }
 
     // Step 5: Deterministic Decision Engine Evaluation
+    t5_engine_start = Date.now();
     const engineResult = this.decisionEngine.evaluateIntent(intent);
+    t6_engine_completed = Date.now();
 
     // Step 6: Grounded Explanation Generation
     let explanation = '';
     try {
+      t7_groq_explanation_start = Date.now();
       explanation = await this.llmProvider.generateExplanation(engineResult, userMessage);
+      t8_groq_explanation_completed = Date.now();
     } catch (err: any) {
+      t8_groq_explanation_completed = Date.now();
       explanation = engineResult.reasons.join(' ');
     }
 
@@ -953,7 +1244,10 @@ export class AgentOrchestrator {
       unsupported_category: engineResult.unsupported_category,
       supported_categories: engineResult.supported_categories,
       unfulfilled_constraints: engineResult.unfulfilled_constraints,
-      execution_time_ms: Number((performance.now() - startTime).toFixed(1))
+      candidate_brands_considered: engineResult.candidate_brands_considered,
+      selected_accessory_skus: session.selected_accessory_skus,
+      execution_time_ms: Number((performance.now() - startTime).toFixed(1)),
+      timings: buildTimings()
     };
 
     this.sessionManager.recordAgentResponse(sessionId, response);

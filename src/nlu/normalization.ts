@@ -309,7 +309,7 @@ export function normalizeCategories(text: string): ProductCategory[] {
     categories.add('bag');
   }
 
-  if (/\b(accessories|bundle|full kit|workspace kit|setup)\b/i.test(lower)) {
+  if (/\b(accessories|bundle|full kit|workspace kit)\b/i.test(lower)) {
     categories.add('mouse');
     categories.add('bag');
   }

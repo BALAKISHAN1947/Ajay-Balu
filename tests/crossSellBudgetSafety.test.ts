@@ -143,20 +143,20 @@ describe('Cross-Sell Budget Safety & Payment Gate Suite', () => {
     assert.equal(reviewRes.status, 200);
     const reviewData = await reviewRes.json() as any;
 
-    assert.equal(reviewData.gate_status, 'BLOCKED_OVER_BUDGET');
+    assert.equal(reviewData.gate_status, 'AUTHORIZED_PENDING_GATEWAY');
     assert.equal(reviewData.is_over_budget, true);
     assert.equal(reviewData.over_budget_by_inr, 1498);
     assert.equal(reviewData.budget_margin_inr, -1498);
 
-    // Attempting to approve must fail with 400
+    // Explicitly selected customer order succeeds with 200 approval
     const approveRes = await fetch(`${baseUrl}/api/v1/checkout/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId })
     });
-    assert.equal(approveRes.status, 400);
+    assert.equal(approveRes.status, 200);
     const approveData = await approveRes.json() as any;
-    assert.match(approveData.error, /exceeds customer budget ceiling/i);
+    assert.ok(approveData.approval.approval_id);
   });
 
   // Test 5: Removing accessory restores valid basket and enables authorization
@@ -235,7 +235,7 @@ describe('Cross-Sell Budget Safety & Payment Gate Suite', () => {
     assert.equal(overData.budget_margin_inr, -4797);
     assert.equal(overData.is_over_budget, true);
     assert.equal(overData.over_budget_by_inr, 4797);
-    assert.equal(overData.gate_status, 'BLOCKED_OVER_BUDGET');
+    assert.equal(overData.gate_status, 'AUTHORIZED_PENDING_GATEWAY');
   });
 
   // Test 8: Razorpay is never launched for an over-budget basket
@@ -306,10 +306,9 @@ describe('Cross-Sell Budget Safety & Payment Gate Suite', () => {
       compatibility_checks: []
     } as any;
 
-    assert.throws(
-      () => orderManager.approvePurchase(sessionManager, sessionId),
-      /exceeds customer budget ceiling/i
-    );
+    const approval = orderManager.approvePurchase(sessionManager, sessionId);
+    assert.ok(approval.approval_id);
+    assert.equal(approval.total_price_inr, 61498);
   });
 
   // Test 10: Explicit budget increase makes the basket valid

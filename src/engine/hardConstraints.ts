@@ -23,7 +23,52 @@ export function filterLaptopsByHardConstraints(
   for (const laptop of laptops) {
     let rejected = false;
 
-    // 1. Active status check
+    // 1. Explicit requested brand check (Priority 2)
+    if (intent.requested_brand) {
+      const reqBrand = intent.requested_brand.toLowerCase().trim();
+      if (laptop.brand.toLowerCase() !== reqBrand) {
+        rejections.push({
+          sku: laptop.sku,
+          name: laptop.name,
+          category: 'laptop',
+          rule: 'REQUESTED_BRAND',
+          actual: laptop.brand,
+          required: intent.requested_brand,
+          reason: `Rejected because ${laptop.name} is manufactured by ${laptop.brand}, but customer explicitly requested ${intent.requested_brand}.`
+        });
+        rejected = true;
+        continue;
+      }
+    }
+
+    // 2. Explicit requested model check (Priority 3)
+    if (intent.requested_model) {
+      const targetModel = intent.requested_model.toLowerCase().trim();
+      const laptopName = laptop.name.toLowerCase();
+      const modelWords = targetModel
+        .split(/\s+/)
+        .filter((w) => w.length > 2 && w !== intent.requested_brand?.toLowerCase());
+
+      const isMatch =
+        laptopName.includes(targetModel) ||
+        (modelWords.length > 0 && modelWords.every((w) => laptopName.includes(w)));
+
+      if (!isMatch) {
+        rejections.push({
+          sku: laptop.sku,
+          name: laptop.name,
+          category: 'laptop',
+          rule: 'REQUESTED_MODEL',
+          actual: laptop.name,
+          required: intent.requested_model,
+          reason: `Rejected because ${laptop.name} does not match requested model "${intent.requested_model}".`
+        });
+        rejected = true;
+        continue;
+      }
+    }
+
+    // 3. Active status check
     if (!laptop.is_active) {
       rejections.push({
         sku: laptop.sku,
@@ -296,6 +341,32 @@ export function analyzeConstraintFailures(
 
   const cheapestInCatalog = [...activeLaptops].sort((a, b) => a.price_inr - b.price_inr)[0];
 
+  if (intent.requested_model) {
+    failedConstraints.push('REQUESTED_MODEL');
+    failurePoints.push(`I couldn't find that exact model in the verified catalog.`);
+  }
+
+  if (intent.requested_brand) {
+    const brandActive = activeLaptops.filter(
+      (l) => l.brand.toLowerCase() === intent.requested_brand!.toLowerCase()
+    );
+    if (brandActive.length === 0) {
+      failedConstraints.push('REQUESTED_BRAND');
+      failurePoints.push(`No laptop from brand "${intent.requested_brand}" was found in our verified catalog.`);
+    } else {
+      const brandUnderBudget = maxBudget !== undefined
+        ? brandActive.filter((l) => l.price_inr <= maxBudget)
+        : brandActive;
+      if (brandUnderBudget.length === 0 && maxBudget !== undefined) {
+        failedConstraints.push('BRAND_BUDGET_COMBINATION');
+        const cheapestBrand = [...brandActive].sort((a, b) => a.price_inr - b.price_inr)[0];
+        failurePoints.push(
+          `No ${intent.requested_brand} laptop in the verified catalog fits within your ₹${maxBudget.toLocaleString('en-IN')} budget (lowest-priced ${intent.requested_brand} model is ${cheapestBrand.name} at ₹${cheapestBrand.price_inr.toLocaleString('en-IN')}).`
+        );
+      }
+    }
+  }
+
   if (maxBudget !== undefined && satisfyingBudgetCount === 0) {
     failedConstraints.push('BUDGET_CEILING');
     const gap = cheapestInCatalog ? cheapestInCatalog.price_inr - maxBudget : 0;
@@ -381,6 +452,31 @@ export function analyzeConstraintFailures(
 
   // Determine closest options deterministically
   const closestOptions: ClosestOption[] = [];
+
+  // Option 0: Verified alternative from requested brand if available
+  if (intent.requested_brand) {
+    const brandActive = activeLaptops.filter(
+      (l) => l.brand.toLowerCase() === intent.requested_brand!.toLowerCase()
+    );
+    if (brandActive.length > 0) {
+      const topBrandLaptop = [...brandActive].sort((a, b) => a.price_inr - b.price_inr)[0];
+      const delta = maxBudget ? topBrandLaptop.price_inr - maxBudget : 0;
+      closestOptions.push({
+        type: 'SAME_BRAND_ALTERNATIVE',
+        label: `Verified alternative from ${intent.requested_brand}: ${topBrandLaptop.name}`,
+        sku: topBrandLaptop.sku,
+        name: topBrandLaptop.name,
+        price_inr: topBrandLaptop.price_inr,
+        ram_gb: topBrandLaptop.ram.capacity_gb,
+        storage_gb: topBrandLaptop.storage.capacity_gb,
+        budget_delta_inr: delta,
+        unmet_constraints: delta > 0 ? [`Exceeds budget by ₹${delta.toLocaleString('en-IN')}`] : [],
+        trade_off: delta > 0
+          ? `Verified ${intent.requested_brand} model available at ₹${topBrandLaptop.price_inr.toLocaleString('en-IN')} (exceeds budget by ₹${delta.toLocaleString('en-IN')}).`
+          : `Verified ${intent.requested_brand} model available at ₹${topBrandLaptop.price_inr.toLocaleString('en-IN')}.`
+      });
+    }
+  }
 
   // Option A1: Cheapest option satisfying requested GPU
   if ((gpuModel || requiresDedicated) && satisfyingGpuCount > 0) {

@@ -213,13 +213,13 @@ describe('Milestone 5: Benchmark Validation, State Machine & Crash Prevention Su
     assert.strictEqual(latest?.results.length, 100);
   });
 
-  // Requirement 18.11: Before/After cannot run without a completed baseline or approved fix
+  // Requirement 18.11: Isolated 1-fix experiment cannot run without a completed baseline or without approved fix
   it('11. Before/After cannot run without a completed baseline or without approved fix', async () => {
     const freshExp = new ExperimentEngine();
     // 11A: Without baseline run
     await assert.rejects(
       async () => {
-        await freshExp.runEnrichedExperiment();
+        await freshExp.runIsolatedExperiment('FIX-RAM-01');
       },
       (err: any) => {
         return err.message.includes('PRECONDITION_FAILED') && err.message.includes('baseline benchmark first');
@@ -232,10 +232,10 @@ describe('Milestone 5: Benchmark Validation, State Machine & Crash Prevention Su
     await expNoFix.runBaseline();
     await assert.rejects(
       async () => {
-        await expNoFix.runEnrichedExperiment();
+        await expNoFix.runIsolatedExperiment('FIX-RAM-01');
       },
       (err: any) => {
-        return err.message.includes('PRECONDITION_FAILED') && err.message.includes('No approved Catalog Version B');
+        return err.message.includes('PRECONDITION_FAILED') && err.message.includes('not approved');
       }
     );
   });
@@ -247,7 +247,7 @@ describe('Milestone 5: Benchmark Validation, State Machine & Crash Prevention Su
     const exp = new ExperimentEngine(fixEngine);
 
     const baselineSummary = await exp.runBaseline();
-    const comparison = await exp.runEnrichedExperiment();
+    const comparison = await exp.runIsolatedExperiment('FIX-RAM-01');
     const enrichedSummary = exp.getEnrichedSummary()!;
 
     assert.strictEqual(baselineSummary.results.length, 100);

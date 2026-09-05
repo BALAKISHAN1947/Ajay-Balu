@@ -182,15 +182,15 @@ describe('Milestone 5: Merchant Revenue Intelligence & Controlled AI Buyer Bench
 
   // Test 15: Before benchmark remains unchanged after after-run
   it('15. Before benchmark remains unchanged after after-run', async () => {
-    const experiment = new ExperimentEngine();
+    const fixEngine = new CatalogFixEngine();
+    const experiment = new ExperimentEngine(fixEngine);
     const baselineBefore = await experiment.runBaseline();
     const baselineWonBefore = baselineBefore.won_count;
     const baselineMatchRateBefore = baselineBefore.product_match_rate;
 
-    // Approve a fix and run enriched
-    const fixEngine = getCatalogFixEngine();
+    // Approve a fix and run isolated experiment
     fixEngine.approveFix('FIX-RAM-01');
-    const comparison = await experiment.runEnrichedExperiment();
+    const comparison = await experiment.runIsolatedExperiment('FIX-RAM-01');
 
     const baselineAfter = experiment.getBaselineSummary()!;
     assert.strictEqual(baselineAfter.won_count, baselineWonBefore, 'Baseline won count must remain untouched');
@@ -200,9 +200,11 @@ describe('Milestone 5: Merchant Revenue Intelligence & Controlled AI Buyer Bench
 
   // Test 16: After benchmark uses exactly same intent set
   it('16. After benchmark uses exactly same intent set', async () => {
-    const experiment = new ExperimentEngine();
+    const fixEngine = new CatalogFixEngine();
+    const experiment = new ExperimentEngine(fixEngine);
     await experiment.runBaseline();
-    const enrichedComparison = await experiment.runEnrichedExperiment();
+    fixEngine.approveFix('FIX-RAM-01');
+    const enrichedComparison = await experiment.runIsolatedExperiment('FIX-RAM-01');
     const enrichedSummary = experiment.getEnrichedSummary()!;
 
     assert.strictEqual(enrichedSummary.total_intents, 100);
@@ -233,9 +235,10 @@ describe('Milestone 5: Merchant Revenue Intelligence & Controlled AI Buyer Bench
     const pendingFixes = fixEngine.getPendingFixes();
     assert.ok(pendingFixes.some((f) => f.fix_id === 'FIX-RAM-01' && f.status === 'PENDING'));
 
-    // Creating Version B without approval should apply 0 fixes
-    const versionBNoApproval = fixEngine.createVersionBCatalog();
-    assert.strictEqual(versionBNoApproval.applied_fixes.length, 0);
+    // Creating Version B without approval should throw
+    assert.throws(() => {
+      fixEngine.createVersionBCatalog();
+    }, /Exactly 1 approved fix is required/);
 
     // Only after approval
     fixEngine.approveFix('FIX-RAM-01');
@@ -249,8 +252,8 @@ describe('Milestone 5: Merchant Revenue Intelligence & Controlled AI Buyer Bench
     const fixEngine = new CatalogFixEngine();
     const mockSummary: any = {
       results: [
-        { rejection_reasons: ['NX-LP-MINRAMMISS-14: RAM capacity is missing'], query: 'AlphaBook', catalog_attributed_opportunity_inr: 58000 },
-        { rejection_reasons: ['NX-LP-MINRAMMISS-14: RAM capacity is missing'], query: 'AlphaBook', catalog_attributed_opportunity_inr: 58000 }
+        { loss_reason_code: 'RAM_MISMATCH', rejection_reasons: ['NX-LP-MINRAMMISS-14: RAM capacity is missing'], query: 'AlphaBook', catalog_attributed_opportunity_inr: 58000, intent: { expected_characteristics: { target_sku: 'NX-LP-MINRAMMISS-14' } } },
+        { loss_reason_code: 'RAM_MISMATCH', rejection_reasons: ['NX-LP-MINRAMMISS-14: RAM capacity is missing'], query: 'AlphaBook', catalog_attributed_opportunity_inr: 58000, intent: { expected_characteristics: { target_sku: 'NX-LP-MINRAMMISS-14' } } }
       ]
     };
     const scored = fixEngine.updateFixMetricsFromBenchmark(mockSummary);

@@ -26,6 +26,13 @@ export function detectAmbiguity(intent: CustomerIntent, rawQuery: string): Ambig
     };
   }
 
+  // Case 0b: Follow-up conversational selection or reference is not ambiguous
+  if ((intent.follow_up_action && intent.follow_up_action !== 'NONE') || Boolean(intent.target_sku)) {
+    return {
+      isAmbiguous: false
+    };
+  }
+
   // Case 1: No product categories could be determined
   if (!intent.required_categories || intent.required_categories.length === 0) {
     const question = 'Are you looking for a laptop, a workspace accessory (mouse, bag), or a complete bundle?';

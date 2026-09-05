@@ -67,8 +67,12 @@ export class ExperimentEngine {
       throw new Error(`PRECONDITION_FAILED: Fix "${fixId}" is not approved. Approve it first via the merchant approval gate.`);
     }
 
-    // Build a Version B with ONLY this single fix applied
+    // Build a Version B with ONLY this single fix applied from pristine Catalog A
     const versionBData = this.fixEngine.createVersionBCatalogWithFixes([fixId]);
+    if (versionBData.applied_fixes.length !== 1 || versionBData.applied_fixes[0] !== fixId) {
+      throw new Error(`Integrity error: Expected exactly 1 fix "${fixId}", but got [${versionBData.applied_fixes.join(', ')}].`);
+    }
+
     const runnerB = new BenchmarkRunner(versionBData.repo);
     this.enrichedSummary = await runnerB.runBenchmark(
       versionBData.catalog_version,
@@ -85,34 +89,11 @@ export class ExperimentEngine {
   }
 
   /**
-   * Runs the enriched benchmark on Catalog Version B (all approved fixes).
-   * Uses the EXACT same 100 intents as the baseline.
+   * Multi-fix runs are explicitly forbidden.
+   * Every merchant experiment must be a single-fix causal experiment.
    */
   public async runEnrichedExperiment(): Promise<ExperimentComparison> {
-    if (!this.baselineSummary) {
-      throw new Error('PRECONDITION_FAILED: Run the 100-intent baseline benchmark first.');
-    }
-
-    const approvedFixes = this.fixEngine.getApprovedFixes();
-    if (approvedFixes.length === 0) {
-      throw new Error('PRECONDITION_FAILED: No approved Catalog Version B change is available yet.');
-    }
-
-    const versionBData = this.fixEngine.createVersionBCatalog();
-    const runnerB = new BenchmarkRunner(versionBData.repo);
-    this.enrichedSummary = await runnerB.runBenchmark(
-      versionBData.catalog_version,
-      'Benchmark-v1.0',
-      BENCHMARK_INTENTS
-    );
-
-    // Multi-fix run: approved_fix_id is null (not a single causal experiment)
-    return this.compareSummaries(
-      this.baselineSummary,
-      this.enrichedSummary,
-      versionBData.applied_fixes,
-      null // multi-fix — not a single causal experiment
-    );
+    throw new Error('DISABLED: Multi-fix experiments are not permitted. Every experiment must be an isolated 1-fix causal experiment via runIsolatedExperiment(fixId).');
   }
 
   /**
@@ -234,19 +215,52 @@ export class ExperimentEngine {
 
     const hasOutcomeChanges = outcomeTransitions.length > 0;
 
+    // Extract evidence-based metadata for the causal fix
+    let changedSkus: string[] = [];
+    let changedFields: string[] = [];
+    let approvedFixTitle: string | null = null;
+
+    if (singleFixId) {
+      const allKnownFixes = [...this.fixEngine.getApprovedFixes(), ...this.fixEngine.getPendingFixes()];
+      const targetFix = allKnownFixes.find((f) => f.fix_id === singleFixId);
+      if (targetFix) {
+        changedSkus = [targetFix.sku];
+        changedFields = [targetFix.field_path];
+        approvedFixTitle = `${targetFix.product_name} • ${targetFix.field_path}`;
+      }
+    } else if (appliedFixes.length > 0) {
+      const allKnownFixes = [...this.fixEngine.getApprovedFixes(), ...this.fixEngine.getPendingFixes()];
+      for (const fid of appliedFixes) {
+        const fix = allKnownFixes.find((f) => f.fix_id === fid);
+        if (fix) {
+          if (!changedSkus.includes(fix.sku)) changedSkus.push(fix.sku);
+          if (!changedFields.includes(fix.field_path)) changedFields.push(fix.field_path);
+        }
+      }
+    }
+
     return {
       experiment_id: generateExperimentId(),
       catalog_version_a: before.catalog_version,
       catalog_version_b: after.catalog_version,
       benchmark_version: before.benchmark_version,
+      same_benchmark_version: before.benchmark_version,
       baseline_catalog_version: before.catalog_version,
       enriched_catalog_version: after.catalog_version,
       timestamp: new Date().toISOString(),
       approved_fixes_applied: appliedFixes,
       approved_fix_id: singleFixId,
+      approved_fix_title: approvedFixTitle,
+      changed_skus: changedSkus,
+      changed_fields: changedFields,
       has_outcome_changes: hasOutcomeChanges,
       metrics: {
+        ai_buyer_readiness_score: calcDelta(
+          before.ai_buyer_readiness_score ?? 0,
+          after.ai_buyer_readiness_score ?? 0
+        ),
         product_match_rate: calcDelta(before.product_match_rate, after.product_match_rate),
+        hard_constraint_adherence: calcDelta(before.hard_constraint_adherence, after.hard_constraint_adherence),
         variant_accuracy_rate: calcDelta(before.variant_accuracy_rate, after.variant_accuracy_rate),
         compatibility_success_rate: calcDelta(before.compatibility_success_rate, after.compatibility_success_rate),
         checkout_ready_rate: calcDelta(before.checkout_ready_rate, after.checkout_ready_rate),
@@ -256,6 +270,10 @@ export class ExperimentEngine {
           after.supported_intents > 0 ? Number((after.simulated_cross_sells_accepted_count / after.supported_intents).toFixed(3)) : 0
         ),
         catalog_attributed_opportunity_value_inr: calcDelta(
+          before.catalog_attributed_opportunity_value_inr,
+          after.catalog_attributed_opportunity_value_inr
+        ),
+        modeled_catalog_opportunity_value_inr: calcDelta(
           before.catalog_attributed_opportunity_value_inr,
           after.catalog_attributed_opportunity_value_inr
         ),

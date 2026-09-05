@@ -22,6 +22,8 @@ export interface AuditEvent {
     | 'BUDGET_UPDATED'
     | 'PURCHASE_REVIEW_OPENED'
     | 'PURCHASE_REVIEW_BLOCKED_OVER_BUDGET'
+    | 'ORDER_ABOVE_ORIGINAL_BUDGET_APPROVED'
+    | 'ORDER_ABOVE_ORIGINAL_BUDGET_PAYMENT_INITIATED'
     | 'INCOMPATIBLE_ACCESSORY_BLOCKED'
     | 'PURCHASE_APPROVED'
     | 'CHECKOUT_VALIDATION_STARTED'
@@ -89,7 +91,7 @@ export interface PurchaseReview {
   line_items: PurchaseReviewLineItem[];
   verified_trade_offs: string[];
   audit_events_count: number;
-  gate_status: 'AUTHORIZED_PENDING_GATEWAY' | 'BLOCKED_OVER_BUDGET';
+  gate_status: 'AUTHORIZED_PENDING_GATEWAY' | 'BLOCKED_OVER_BUDGET' | 'BLOCKED_STOCK_DEPLETED' | 'BLOCKED_INCOMPATIBLE';
   is_over_budget?: boolean;
   over_budget_by_inr?: number;
 }
@@ -107,6 +109,30 @@ export interface Session {
   active_approval_id?: string;
   active_basket_hash?: string;
   current_order_id?: string;
+  comparison_products?: SessionOptionItem[];
+}
+
+export interface SessionOptionItem {
+  sku: string;
+  name: string;
+  brand?: string;
+  price_inr: number;
+  position?: number;
+}
+
+export interface ConversationContext {
+  last_user_message?: string;
+  last_assistant_state?: string;
+  last_assistant_explanation?: string;
+  last_assistant_result?: {
+    state: string;
+    recommended_product?: SessionOptionItem | null;
+    closest_options?: SessionOptionItem[];
+    comparison_options?: SessionOptionItem[];
+  };
+  current_selected_product?: SessionOptionItem | null;
+  current_selected_skus?: string[];
+  current_basket_total_inr?: number;
 }
 
 export interface ProductComparisonResult {
