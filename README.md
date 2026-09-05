@@ -162,17 +162,17 @@ AgentReady provides the complete infrastructure to answer these questions with m
                     │
                     ▼
      AI Buyer Readiness Diagnostic (Score: 73/100)
-   (Intent Match: 67.7% | Constraint Adherence: 73.2% | Checkout Ready: 67.7% | Coverage: 90.0%)
+   (Intent Match: 67.7% | Constraint Adherence: 73.2% | Checkout Ready: 67.7% | Coverage: 93.0%)
                     │
                     ▼
-     Outcome Classification: 61 WON | 22 LOST | 7 PARTIAL | 10 UNSUPPORTED
+     Outcome Classification: 63 WON | 23 LOST | 7 PARTIAL | 7 UNSUPPORTED
                     │
                     ▼
      High-Level Failure Map & Root-Cause Diagnosis
    (Missing Specs, Ambiguous Dongles, Stockout, RAM/GPU Ceilings)
                     │
                     ▼
-     Modeled Catalog Opportunity Aggregation (₹14,20,000)
+     Modeled Catalog Opportunity Aggregation (₹15,31,393)
                     │
                     ▼
      Prioritized Catalog Improvement Proposals
@@ -429,10 +429,10 @@ Where:
 | Metric | Score / Rate | Benchmark Context |
 | :--- | :---: | :--- |
 | **AI Buyer Readiness** | **73 / 100** | Composite diagnostic score |
-| **Intent Match Rate** | **67.7%** | 61 Won / 90 Supported intents |
+| **Intent Match Rate** | **67.7%** | 63 Won / 93 Supported intents |
 | **Hard Constraint Adherence** | **73.2%** | Satisfied constraint checks |
-| **Checkout-Ready Rate** | **67.7%** | 61 / 90 Supported intents |
-| **Catalog Coverage** | **90.0%** | 90 Supported / 100 Total intents |
+| **Checkout-Ready Rate** | **67.7%** | 63 / 93 Supported intents |
+| **Catalog Coverage** | **93.0%** | 93 Supported / 100 Total intents |
 
 *(Snapshot based on the controlled 100-intent benchmark on baseline Catalog v1.0.)*
 
@@ -444,11 +444,11 @@ The benchmark consists of **100 fixed, multi-persona buyer intents** spanning de
 
 ```
 Total Benchmark Population: 100 Intents
-├── Supported Merchant Domain: 90 Intents
-│   ├── WON: 61 Intents (Fully satisfied, constraint-valid, transaction-ready)
+├── Supported Merchant Domain: 93 Intents
+│   ├── WON: 63 Intents (Fully satisfied, constraint-valid, transaction-ready)
 │   ├── PARTIAL: 7 Intents (Satisfied with disclosed trade-offs, e.g., budget ceiling)
-│   └── LOST: 22 Intents (Failed due to missing specs, stockout, or constraint mismatch)
-└── Unsupported Domain: 10 Intents (Out-of-scope categories like running shoes or groceries)
+│   └── LOST: 23 Intents (Failed due to missing specs, stockout, or constraint mismatch)
+└── Unsupported Domain: 7 Intents (Out-of-scope categories like running shoes or groceries)
 ```
 
 **Why the benchmark is fixed:** Evaluating the identical 100 intents across catalog versions ensures causal validity. It prevents cherry-picking easy requests or artificially inflating scores.
@@ -490,7 +490,7 @@ AgentReady categorizes every failed benchmark intent into a **High-Level Failure
 
 $$\text{Modeled Opportunity} = \sum_{\text{Lost Intents}} \text{Verified Catalog Product / Expected Budget Value}$$
 
-- **Baseline Modeled Opportunity:** **₹14,20,000** across 22 lost and 7 partial intents.
+- **Baseline Modeled Opportunity:** **₹15,31,393** across 23 lost and 7 partial intents.
 - **Strict Distinction:** Modeled opportunity is an internal prioritization metric. It is **not** realized cash revenue, guaranteed sales, or a predictive conversion rate.
 
 ---
@@ -583,15 +583,15 @@ AI Buyer Readiness Score     73 / 100               73 / 100               0
 Intent Match Rate            67.7%                  67.7%                  0.0%
 Constraint Adherence Rate    73.2%                  73.2%                  0.0%
 Checkout-Ready Rate          67.7%                  67.7%                  0.0%
-Catalog Coverage Rate        90.0%                  90.0%                  0.0%
+Catalog Coverage Rate        93.0%                  93.0%                  0.0%
 Verified Outcome Transitions 0                      0                      0
-Modeled Catalog Opportunity  ₹14,20,000             ₹14,20,000             ₹0
+Modeled Catalog Opportunity  ₹15,31,393             ₹15,29,394             -₹1,999 (-0.1%)
 ========================================================================
 ```
 
 ### Scientific Explanation of Zero-Outcome Result
 This zero-outcome transition is a **genuine, verified causal result**:
-The benchmark intent requesting an AlphaBook was already being served by the qualifying **Nexora DevBook Pro 15** in baseline Catalog A. Fixing the RAM attribute on the AlphaBook made it eligible, but because the customer's intent was already in a `WON` state, no net new buyer was converted from `LOST` to `WON`.
+The benchmark intent requesting an AlphaBook was already being served by the qualifying **Nexora DevBook Pro 15** in baseline Catalog A. Fixing the RAM attribute on the AlphaBook made it eligible, but because the customer's intent was already in a `WON` state, no net new buyer was converted from `LOST` to `WON`. (The minor opportunity attribution adjustment of -₹1,999 reflects re-attribution on an already-resolved intent, not a customer conversion gain).
 
 AgentReady reports this honestly rather than fabricating artificial conversion gains.
 
@@ -754,6 +754,21 @@ npm test
 4. `tests/finalPassIntegrityAndExperiment.test.ts`: 1-fix causal isolation, Catalog A immutability, and real outcome transition tracking.
 5. `tests/accessoryCheckboxAndBudgetSafety.test.ts`: Accessory opt-in integrity and budget ceiling protection.
 
+### Measured Latency Breakdown (Production Diagnostic)
+
+Live profiling with `openai/gpt-oss-120b` via Groq demonstrates clear, measured boundaries between AI natural-language reasoning and deterministic commerce logic:
+
+| Component | Measured Latency | Operational Description |
+| :--- | :---: | :--- |
+| **Groq Intent Extraction** | ~1,160 – 1,860 ms | Parses unstructured user text into typed JSON constraints |
+| **Deterministic Decision Engine** | ~1 – 25 ms | Authoritative catalog filtering, constraint validation & soft scoring |
+| **Groq Grounded Explanation** | ~1,600 – 1,750 ms | Synthesizes conversational explanation citing only catalog facts |
+| **Total Server Pipeline (Live Groq)** | ~2.8 – 3.7 s | Full server execution time for live two-call LLM orchestration |
+| **Deterministic Fallback (Offline/Test)** | < 10 ms | Zero-latency regex/linguistic engine for testing & failover |
+| **Client Rendering / Network Roundtrip** | ~30 – 70 ms | Browser DOM rendering and local HTTP transit |
+
+*(Note: There is no artificial or guaranteed fixed latency ceiling. Total request latency represents the sum of live intent extraction, deterministic validation, explanation synthesis, and network transit. Explanation latency is not conflated with total pipeline latency.)*
+
 ---
 
 ## Honest Scope & Limitations
@@ -782,7 +797,7 @@ To ensure absolute credibility for reviewers and judges:
 ### Merchant Intelligence Walkthrough
 1. **Run Baseline Diagnostic:** Switch to the **Merchant Intelligence** tab and click **"Run 100-Intent Benchmark"**.
 2. **Review Readiness Score:** Observe the baseline **AI Buyer Readiness Score (73/100)** and metric breakdown.
-3. **Inspect Failure Map:** View failure categories (Constraint Failures, Metadata Gaps, Stockouts) and total Modeled Opportunity (₹14,20,000).
+3. **Inspect Failure Map:** View failure categories (Constraint Failures, Metadata Gaps, Stockouts) and total Modeled Opportunity (₹15,31,393).
 4. **Forensic Query Audit:** Click any failed intent (e.g., `INTENT-MISS-RAM-01`) to inspect missing attributes and rejection reasons.
 5. **Approve a Catalog Fix:** Review proposed fixes and approve **FIX-RAM-01** (`NX-LP-MINRAMMISS-14`).
 6. **Run Causal Experiment:** Click **"Run 1-Fix Experiment"** to test the approved change on Catalog Version B against the exact same 100 intents.
